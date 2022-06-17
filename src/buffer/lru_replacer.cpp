@@ -14,16 +14,37 @@
 
 namespace bustub {
 
-LRUReplacer::LRUReplacer(size_t num_pages) {}
+LRUReplacer::LRUReplacer(size_t num_pages) { this->num_pages = num_pages; }
 
 LRUReplacer::~LRUReplacer() = default;
 
-bool LRUReplacer::Victim(frame_id_t *frame_id) { return false; }
+bool LRUReplacer::Victim(frame_id_t *frame_id) {
+  if (cache.size() <= 0) return false;
+  *frame_id = cache.back();
+  cache.pop_back();
+  mp.erase(*frame_id);
+  return true;
+}
 
-void LRUReplacer::Pin(frame_id_t frame_id) {}
+void LRUReplacer::Pin(frame_id_t frame_id) {
+  auto it = mp.find(frame_id);
+  if (it == mp.end()) return;
 
-void LRUReplacer::Unpin(frame_id_t frame_id) {}
+  cache.erase(mp[frame_id]);
+  mp.erase(frame_id);
+}
 
-size_t LRUReplacer::Size() { return 0; }
+void LRUReplacer::Unpin(frame_id_t frame_id) {
+  auto it = mp.find(frame_id);
+  if (it != mp.end()) return;
+  if (cache.size() < num_pages) {
+    cache.push_front(frame_id);
+    mp[frame_id] = cache.begin();
+  } else {
+    //容器满了怎么办？
+  }
+}
+
+size_t LRUReplacer::Size() { return cache.size(); }
 
 }  // namespace bustub
