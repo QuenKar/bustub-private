@@ -53,6 +53,8 @@ class LRUReplacer : public Replacer {
   std::unordered_map<frame_id_t, std::list<frame_id_t>::iterator> mp;
 
   size_t num_pages;
+
+  std::mutex _mtx;
 };
 
 }  // namespace bustub

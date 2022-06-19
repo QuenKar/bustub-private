@@ -19,6 +19,8 @@ LRUReplacer::LRUReplacer(size_t num_pages) { this->num_pages = num_pages; }
 LRUReplacer::~LRUReplacer() = default;
 
 bool LRUReplacer::Victim(frame_id_t *frame_id) {
+  std::lock_guard<std::mutex> guard(_mtx);
+
   if (cache.size() <= 0) return false;
   *frame_id = cache.back();
   cache.pop_back();
@@ -27,6 +29,8 @@ bool LRUReplacer::Victim(frame_id_t *frame_id) {
 }
 
 void LRUReplacer::Pin(frame_id_t frame_id) {
+  std::lock_guard<std::mutex> guard(_mtx);
+
   auto it = mp.find(frame_id);
   if (it == mp.end()) return;
 
@@ -35,6 +39,8 @@ void LRUReplacer::Pin(frame_id_t frame_id) {
 }
 
 void LRUReplacer::Unpin(frame_id_t frame_id) {
+  std::lock_guard<std::mutex> guard(_mtx);
+
   auto it = mp.find(frame_id);
   if (it != mp.end()) return;
   if (cache.size() < num_pages) {
