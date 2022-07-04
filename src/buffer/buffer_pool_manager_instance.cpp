@@ -49,11 +49,23 @@ BufferPoolManagerInstance::~BufferPoolManagerInstance() {
 
 bool BufferPoolManagerInstance::FlushPgImp(page_id_t page_id) {
   // Make sure you call DiskManager::WritePage!
+  if (page_id == INVALID_PAGE_ID) return false;
+  // find the page and write data to disk page.
+  Page *p = nullptr;
+  for (int i = 0; i < pool_size_; i++) {
+    if (page_id == pages_[i].page_id_) {
+      disk_manager_->WritePage(page_id, pages_[i].data_);
+      return true;
+    }
+  }
   return false;
 }
 
 void BufferPoolManagerInstance::FlushAllPgsImp() {
   // You can do it!
+  for (int i = 0; i < pool_size_; i++) {
+    
+  }
 }
 
 Page *BufferPoolManagerInstance::NewPgImp(page_id_t *page_id) {
@@ -62,7 +74,37 @@ Page *BufferPoolManagerInstance::NewPgImp(page_id_t *page_id) {
   // 2.   Pick a victim page P from either the free list or the replacer. Always pick from the free list first.
   // 3.   Update P's metadata, zero out memory and add P to the page table.
   // 4.   Set the page ID output parameter. Return a pointer to P.
-  return nullptr;
+  Page *p = nullptr;
+  frame_id_t f_id = -1;
+  if (!free_list_.empty()) {
+    f_id = free_list_.front();
+    free_list_.pop_front();
+    p = &pages_[f_id];
+  } else {
+    if (replacer_->Victim(&f_id)) {
+      p = &pages_[f_id];
+
+      if (p->IsDirty()) {
+        disk_manager_->WritePage(p->GetPageId(), p->GetData());
+      }
+
+      page_table_.erase(p->GetPageId());
+    } else {
+      return nullptr;
+    }
+  }
+
+  p->page_id_ = AllocatePage();
+  p->pin_count_ = 1;
+  p->is_dirty_ = false;
+  p->ResetMemory();
+
+  page_table_[p->page_id_] = f_id;
+  replacer_->Pin(f_id);
+
+  *page_id = p->page_id_;
+
+  return p;
 }
 
 Page *BufferPoolManagerInstance::FetchPgImp(page_id_t page_id) {
