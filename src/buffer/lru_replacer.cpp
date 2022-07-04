@@ -18,6 +18,9 @@ LRUReplacer::LRUReplacer(size_t num_pages) { this->num_pages = num_pages; }
 
 LRUReplacer::~LRUReplacer() = default;
 
+//lru cache 双向链表，左边是刚访问过的frame，右边是最久未访问的frame
+
+//从lru中选出最久未访问的frame，返回frame_id
 bool LRUReplacer::Victim(frame_id_t *frame_id) {
   std::lock_guard<std::mutex> guard(_mtx);
 
@@ -28,6 +31,7 @@ bool LRUReplacer::Victim(frame_id_t *frame_id) {
   return true;
 }
 
+//frame不会被替换
 void LRUReplacer::Pin(frame_id_t frame_id) {
   std::lock_guard<std::mutex> guard(_mtx);
 
@@ -38,6 +42,7 @@ void LRUReplacer::Pin(frame_id_t frame_id) {
   mp.erase(frame_id);
 }
 
+//frame添加到lru中，将会被替换
 void LRUReplacer::Unpin(frame_id_t frame_id) {
   std::lock_guard<std::mutex> guard(_mtx);
 
