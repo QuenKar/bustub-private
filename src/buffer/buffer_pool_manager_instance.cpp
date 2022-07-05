@@ -170,6 +170,24 @@ bool BufferPoolManagerInstance::DeletePgImp(page_id_t page_id) {
   // 1.   If P does not exist, return true.
   // 2.   If P exists, but has a non-zero pin-count, return false. Someone is using the page.
   // 3.   Otherwise, P can be deleted. Remove P from the page table, reset its metadata and return it to the free list.
+
+  auto iter = page_table_.find(page_id);
+  if (iter == page_table_.end()) return true;
+
+  frame_id_t f_id = iter->second;
+
+  Page *p = &pages_[f_id];
+  if (p->pin_count_ != 0) return false;
+
+  page_table_.erase(iter);
+  DeallocatePage(page_id);
+
+  p->page_id_ = INVALID_PAGE_ID;
+  p->ResetMemory();
+  p->is_dirty_ = false;
+
+  free_list_.push_back(f_id);
+
   return false;
 }
 
