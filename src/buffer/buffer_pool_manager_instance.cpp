@@ -51,20 +51,28 @@ bool BufferPoolManagerInstance::FlushPgImp(page_id_t page_id) {
   // Make sure you call DiskManager::WritePage!
   if (page_id == INVALID_PAGE_ID) return false;
   // find the page and write data to disk page.
-  Page *p = nullptr;
-  for (int i = 0; i < pool_size_; i++) {
-    if (page_id == pages_[i].page_id_) {
-      disk_manager_->WritePage(page_id, pages_[i].data_);
-      return true;
-    }
+
+  auto iter = page_table_.find(page_id);
+  if (iter == page_table_.end()) {
+    return false;
   }
-  return false;
+
+  frame_id_t f_id = iter->second;
+
+  Page *p = &pages_[f_id];
+  disk_manager_->WritePage(p->GetPageId(), p->GetData());
+  p->is_dirty_ = false;
+
+  return true;
 }
 
 void BufferPoolManagerInstance::FlushAllPgsImp() {
   // You can do it!
-  for (int i = 0; i < pool_size_; i++) {
-    
+  for (auto &item : page_table_) {
+    frame_id_t f_id = item.second;
+    Page *p = &pages_[f_id];
+    disk_manager_->WritePage(p->GetPageId(), p->GetData());
+    p->is_dirty_ = false;
   }
 }
 
@@ -115,6 +123,7 @@ Page *BufferPoolManagerInstance::FetchPgImp(page_id_t page_id) {
   // 2.     If R is dirty, write it back to the disk.
   // 3.     Delete R from the page table and insert P.
   // 4.     Update P's metadata, read in the page content from disk, and then return a pointer to P.
+  
   return nullptr;
 }
 
