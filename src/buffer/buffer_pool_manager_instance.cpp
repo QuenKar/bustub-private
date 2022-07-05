@@ -123,7 +123,44 @@ Page *BufferPoolManagerInstance::FetchPgImp(page_id_t page_id) {
   // 2.     If R is dirty, write it back to the disk.
   // 3.     Delete R from the page table and insert P.
   // 4.     Update P's metadata, read in the page content from disk, and then return a pointer to P.
-  
+  auto iter = page_table_.find(page_id);
+  if (iter != page_table_.end()) {
+    frame_id_t f_id = iter->second;
+    Page *p = &pages_[f_id];
+    p->pin_count_++;
+    return p;
+  } else {
+    frame_id_t f_id = -1;
+    if (!free_list_.empty()) {
+      f_id = free_list_.front();
+      free_list_.pop_front();
+    } else {
+      if (replacer_->Victim(&f_id)) {
+        Page *r = &pages_[f_id];
+        if (r->IsDirty()) {
+          disk_manager_->WritePage(r->GetPageId(), r->GetData());
+        }
+
+        page_table_.erase(r->GetPageId());
+
+        page_table_[page_id] = f_id;
+
+        r->page_id_ = page_id;
+        r->pin_count_ = 1;
+        r->is_dirty_ = false;
+        disk_manager_->ReadPage(page_id, r->GetData());
+
+        replacer_->Pin(f_id);
+
+        return r;
+
+      } else {
+        //没有找到f_id
+        return nullptr;
+      }
+    }
+  }
+
   return nullptr;
 }
 
