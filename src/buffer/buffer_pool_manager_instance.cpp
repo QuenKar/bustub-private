@@ -199,7 +199,26 @@ bool BufferPoolManagerInstance::DeletePgImp(page_id_t page_id) {
   return false;
 }
 
-bool BufferPoolManagerInstance::UnpinPgImp(page_id_t page_id, bool is_dirty) { return false; }
+bool BufferPoolManagerInstance::UnpinPgImp(page_id_t page_id, bool is_dirty) {
+  std::lock_guard<std::mutex> guard(latch_);
+
+  auto iter = page_table_.find(page_id);
+  if (iter == page_table_.end()) return false;
+
+  frame_id_t f_id = iter->second;
+  Page *p = &pages_[f_id];
+  if (p->pin_count_ <= 0) {
+    return false;
+  }
+  p->pin_count_--;
+  p->is_dirty_ = is_dirty;
+
+  if (p->pin_count_ <= 0) {
+    replacer_->Unpin(f_id);
+  }
+
+  return true;
+}
 
 page_id_t BufferPoolManagerInstance::AllocatePage() {
   const page_id_t next_page_id = next_page_id_;
