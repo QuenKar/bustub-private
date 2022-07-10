@@ -49,7 +49,7 @@ class LRUReplacer : public Replacer {
 
  private:
   // TODO(student): implement me!
-  std::list<frame_id_t> cache;
+  std::list<frame_id_t> lru_list;
   std::unordered_map<frame_id_t, std::list<frame_id_t>::iterator> mp;
 
   size_t num_pages;

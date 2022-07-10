@@ -130,44 +130,46 @@ Page *BufferPoolManagerInstance::FetchPgImp(page_id_t page_id) {
   std::lock_guard<std::mutex> guard(latch_);
 
   auto iter = page_table_.find(page_id);
+  // if find , return it!
   if (iter != page_table_.end()) {
     frame_id_t f_id = iter->second;
     Page *p = &pages_[f_id];
     p->pin_count_++;
+    replacer_->Pin(f_id);
     return p;
+  }
+  // not found
+  frame_id_t f_id = -1;
+  Page *p = nullptr;
+  if (!free_list_.empty()) {
+    f_id = free_list_.front();
+    free_list_.pop_front();
+    p = &pages_[f_id];
   } else {
-    frame_id_t f_id = -1;
-    if (!free_list_.empty()) {
-      f_id = free_list_.front();
-      free_list_.pop_front();
-    } else {
-      if (replacer_->Victim(&f_id)) {
-        Page *r = &pages_[f_id];
-        if (r->IsDirty()) {
-          disk_manager_->WritePage(r->GetPageId(), r->GetData());
-        }
-
-        page_table_.erase(r->GetPageId());
-
-        page_table_[page_id] = f_id;
-
-        r->page_id_ = page_id;
-        r->pin_count_ = 1;
-        r->is_dirty_ = false;
-        disk_manager_->ReadPage(page_id, r->GetData());
-
-        replacer_->Pin(f_id);
-
-        return r;
-
-      } else {
-        //没有找到f_id
-        return nullptr;
+    if (replacer_->Victim(&f_id)) {
+      p = &pages_[f_id];
+      if (p->IsDirty()) {
+        disk_manager_->WritePage(p->GetPageId(), p->GetData());
       }
+
+      page_table_.erase(p->GetPageId());
+
+    } else {
+      //没有找到f_id
+      return nullptr;
     }
   }
+  // reset state.
+  page_table_[page_id] = f_id;
 
-  return nullptr;
+  p->page_id_ = page_id;
+  p->pin_count_ = 1;
+  p->is_dirty_ = false;
+  disk_manager_->ReadPage(page_id, p->GetData());
+
+  replacer_->Pin(f_id);
+
+  return p;
 }
 
 bool BufferPoolManagerInstance::DeletePgImp(page_id_t page_id) {
