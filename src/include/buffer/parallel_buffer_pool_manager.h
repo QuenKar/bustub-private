@@ -89,18 +89,20 @@ class ParallelBufferPoolManager : public BufferPoolManager {
    */
   void FlushAllPgsImp() override;
 
-  /** Pointer to the disk manager. */
-  DiskManager *disk_manager_ __attribute__((__unused__));
-  /** Pointer to the log manager. */
-  LogManager *log_manager_ __attribute__((__unused__));
   // The number of BufferPoolManager instance;
   size_t num_instances_;
   // the pool size of each BufferPoolManagerInstance
   size_t pool_size_;
+
+  /** Pointer to the disk manager. */
+  DiskManager *disk_manager_ __attribute__((__unused__));
+  /** Pointer to the log manager. */
+  LogManager *log_manager_ __attribute__((__unused__));
+
   /** buffer pool*/
   std::vector<BufferPoolManagerInstance *> buffer_pool_;
-  //RR insert way: the next position.
-  size_t next_insertion;
+  // RR insert way: the next position.
+  size_t next_insert = 0;
 
   std::mutex latch_;
 };

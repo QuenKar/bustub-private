@@ -18,7 +18,7 @@ ParallelBufferPoolManager::ParallelBufferPoolManager(size_t num_instances, size_
                                                      LogManager *log_manager)
     : num_instances_(num_instances), pool_size_(pool_size), disk_manager_(disk_manager), log_manager_(log_manager) {
   // Allocate and create individual BufferPoolManagerInstances
-  for (int i = 0; i < num_instances_; i++) {
+  for (size_t i = 0; i < num_instances_; i++) {
     BufferPoolManagerInstance *instance = new BufferPoolManagerInstance(pool_size_, disk_manager_, log_manager_);
     buffer_pool_.emplace_back(instance);
   }
@@ -26,9 +26,10 @@ ParallelBufferPoolManager::ParallelBufferPoolManager(size_t num_instances, size_
 
 // Update constructor to destruct all BufferPoolManagerInstances and deallocate any associated memory
 ParallelBufferPoolManager::~ParallelBufferPoolManager() {
-  for (int i = 0; i < num_instances_; i++) {
+  for (size_t i = 0; i < num_instances_; i++) {
     BufferPoolManager *instance = buffer_pool_[i];
     delete instance;
+    instance = nullptr;
   }
 }
 
@@ -65,10 +66,11 @@ Page *ParallelBufferPoolManager::NewPgImp(page_id_t *page_id) {
   // 2.   Bump the starting index (mod number of instances) to start search at a different BPMI each time this function
   // is called
   std::lock_guard<std::mutex> guard(latch_);
-  for (int i = 0; i < num_instances_; i++) {
-    BufferPoolManagerInstance *bpmi = buffer_pool_[next_insertion];
+
+  for (size_t i = 0; i < num_instances_; i++) {
+    BufferPoolManagerInstance *bpmi = buffer_pool_[next_insert];
     Page *p = bpmi->NewPage(page_id);
-    next_insertion = (next_insertion + 1) % num_instances_;
+    next_insert = (next_insert + 1) % num_instances_;
     if (p) {
       return p;
     }
