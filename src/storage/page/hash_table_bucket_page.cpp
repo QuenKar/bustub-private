@@ -26,6 +26,10 @@ bool HASH_TABLE_BUCKET_TYPE::GetValue(KeyType key, KeyComparator cmp, std::vecto
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_BUCKET_TYPE::Insert(KeyType key, ValueType value, KeyComparator cmp) {
+  // find key whether is unique
+
+  // insert into array
+
   return true;
 }
 
@@ -47,21 +51,32 @@ ValueType HASH_TABLE_BUCKET_TYPE::ValueAt(uint32_t bucket_idx) const {
 template <typename KeyType, typename ValueType, typename KeyComparator>
 void HASH_TABLE_BUCKET_TYPE::RemoveAt(uint32_t bucket_idx) {}
 
+// This function is no use
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_BUCKET_TYPE::IsOccupied(uint32_t bucket_idx) const {
-  return false;
+  uint8_t c = static_cast<uint8_t>(occupied_[bucket_idx / 8]);
+  return (c & (1 << (bucket_idx % 8)));
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
-void HASH_TABLE_BUCKET_TYPE::SetOccupied(uint32_t bucket_idx) {}
+void HASH_TABLE_BUCKET_TYPE::SetOccupied(uint32_t bucket_idx) {
+  uint8_t c = static_cast<uint8_t>(occupied_[bucket_idx / 8]);
+  c |= (1 << (bucket_idx % 8));
+  occupied_[bucket_idx / 8] = static_cast<char>(c);
+}
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_BUCKET_TYPE::IsReadable(uint32_t bucket_idx) const {
-  return false;
+  uint8_t c = static_cast<uint8_t>(readable_[bucket_idx / 8]);
+  return (c & (1 << (bucket_idx % 8)));
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
-void HASH_TABLE_BUCKET_TYPE::SetReadable(uint32_t bucket_idx) {}
+void HASH_TABLE_BUCKET_TYPE::SetReadable(uint32_t bucket_idx) {
+  uint8_t c = static_cast<uint8_t>(readable_[bucket_idx / 8]);
+  c |= (1 << (bucket_idx % 8));
+  readable_[bucket_idx / 8] = static_cast<char>(c);
+}
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_BUCKET_TYPE::IsFull() {
