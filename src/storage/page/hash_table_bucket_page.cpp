@@ -21,35 +21,69 @@ namespace bustub {
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_BUCKET_TYPE::GetValue(KeyType key, KeyComparator cmp, std::vector<ValueType> *result) {
-  return false;
+  bool flag = false;
+  for (size_t bucket_idx = 0; bucket_idx < BUCKET_ARRAY_SIZE; bucket_idx++) {
+    if (cmp(array_[bucket_idx].first, key) == 0) {
+      result->push_back(array_[bucket_idx].second);
+      flag = true;
+    }
+  }
+  return flag;
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_BUCKET_TYPE::Insert(KeyType key, ValueType value, KeyComparator cmp) {
-  // find key whether is unique
+  int pos = -1;
 
-  // insert into array
+  for (size_t bucket_idx = 0; bucket_idx < BUCKET_ARRAY_SIZE; bucket_idx++) {
+    if (IsReadable(bucket_idx)) {
+      if (cmp(key, array_[bucket_idx].first) == 0 && value == array_[bucket_idx].second) {
+        return false;
+      }
+    } else if (pos == -1) {
+      pos = bucket_idx;
+    }
+  }
 
+  if (pos == -1) {
+    return false;
+  }
+
+  array_[pos] = MappingType(key, value);
+  SetOccupied(pos);
+  SetReadable(pos);
   return true;
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_BUCKET_TYPE::Remove(KeyType key, ValueType value, KeyComparator cmp) {
+  for (size_t bucket_idx = 0; bucket_idx < BUCKET_ARRAY_SIZE; bucket_idx++) {
+    if (IsReadable(bucket_idx)) {
+      if (cmp(key, array_[bucket_idx].first) == 0 && value == array_[bucket_idx].second) {
+        RemoveAt(bucket_idx);
+        return true;
+      }
+    }
+  }
   return false;
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 KeyType HASH_TABLE_BUCKET_TYPE::KeyAt(uint32_t bucket_idx) const {
-  return {};
+  return array_[bucket_idx].first;
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 ValueType HASH_TABLE_BUCKET_TYPE::ValueAt(uint32_t bucket_idx) const {
-  return {};
+  return array_[bucket_idx].second;
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
-void HASH_TABLE_BUCKET_TYPE::RemoveAt(uint32_t bucket_idx) {}
+void HASH_TABLE_BUCKET_TYPE::RemoveAt(uint32_t bucket_idx) {
+  uint8_t c = static_cast<uint8_t>(readable_[bucket_idx / 8]);
+  c &= (~(1 << (bucket_idx % 8)));
+  readable_[bucket_idx / 8] = static_cast<char>(c);
+}
 
 // This function is no use
 template <typename KeyType, typename ValueType, typename KeyComparator>
@@ -80,7 +114,12 @@ void HASH_TABLE_BUCKET_TYPE::SetReadable(uint32_t bucket_idx) {
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_BUCKET_TYPE::IsFull() {
-  return false;
+  for (size_t bucket_idx = 0; bucket_idx < BUCKET_ARRAY_SIZE; bucket_idx++) {
+    if (!IsOccupied(bucket_idx)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
