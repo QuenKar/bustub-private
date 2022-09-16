@@ -27,6 +27,7 @@ HASH_TABLE_TYPE::ExtendibleHashTable(const std::string &name, BufferPoolManager 
                                      const KeyComparator &comparator, HashFunction<KeyType> hash_fn)
     : buffer_pool_manager_(buffer_pool_manager), comparator_(comparator), hash_fn_(std::move(hash_fn)) {
   //  implement me!
+  directory_page_id_ = INVALID_PAGE_ID;
 }
 
 /*****************************************************************************
@@ -46,22 +47,51 @@ uint32_t HASH_TABLE_TYPE::Hash(KeyType key) {
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 uint32_t HASH_TABLE_TYPE::KeyToDirectoryIndex(KeyType key, HashTableDirectoryPage *dir_page) {
-  return 0;
+  uint32_t directory_idx = Hash(key) & dir_page->GetGlobalDepthMask();
+  return directory_idx;
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 page_id_t HASH_TABLE_TYPE::KeyToPageId(KeyType key, HashTableDirectoryPage *dir_page) {
-  return 0;
+  return dir_page->GetBucketPageId(KeyToDirectoryIndex(key));
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 HashTableDirectoryPage *HASH_TABLE_TYPE::FetchDirectoryPage() {
-  return nullptr;
+  HashTableDirectoryPage *ret = nullptr;
+  if (directory_page_id_ == INVALID_PAGE_ID) {
+    // new a directory page
+    page_id_t new_dir_page_id;
+    buffer_pool_manager_->NewPgImp(&new_dir_page_id);
+    Page *p = buffer_pool_manager_->FetchPgImp(directory_page_id_);
+    assert(p != nullptr);
+    directory_page_id_ = new_dir_page_id;
+    ret = reinterpret_cast<HashTableDirectoryPage *>(p->GetData());
+    ret->SetPageId(directory_page_id_);
+    // new first bucket
+    page_id_t new_bkt_page_id;
+    Page *p = buffer_pool_manager_->NewPgImp(&new_bkt_page_id);
+    assert(p != nullptr);
+    ret->SetBucketPageId(0, new_bkt_page_id);
+    // unpin pages
+    buffer_pool_manager_->UnpinPgImp(directory_page_id_);
+    buffer_pool_manager_->UnpinPgImp(new_bkt_page_id);
+
+  } else {
+    Page *p = buffer_pool_manager_->FetchPgImp(directory_page_id_);
+    assert(p != nullptr);
+    ret = reinterpret_cast<HashTableDirectoryPage *>(p->GetData());
+  }
+  return ret;
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 HASH_TABLE_BUCKET_TYPE *HASH_TABLE_TYPE::FetchBucketPage(page_id_t bucket_page_id) {
-  return nullptr;
+  HASH_TABLE_BUCKET_TYPE *ret = nullptr;
+  Page *p = buffer_pool_manager_->FetchPgImp(bucket_page_id);
+  assert(p != nullptr);
+  ret = reinterpret_cast<HASH_TABLE_BLOCK_TYPE *>(p->GetData());
+  return ret;
 }
 
 /*****************************************************************************
