@@ -62,35 +62,36 @@ HashTableDirectoryPage *HASH_TABLE_TYPE::FetchDirectoryPage() {
   if (directory_page_id_ == INVALID_PAGE_ID) {
     // new a directory page
     page_id_t new_dir_page_id;
-    buffer_pool_manager_->NewPgImp(&new_dir_page_id);
-    Page *p = buffer_pool_manager_->FetchPgImp(directory_page_id_);
+    buffer_pool_manager_->NewPage(&new_dir_page_id);
+    Page *p = buffer_pool_manager_->FetchPage(directory_page_id_);
     assert(p != nullptr);
     directory_page_id_ = new_dir_page_id;
     ret = reinterpret_cast<HashTableDirectoryPage *>(p->GetData());
     ret->SetPageId(directory_page_id_);
     // new first bucket
     page_id_t new_bkt_page_id;
-    Page *p = buffer_pool_manager_->NewPgImp(&new_bkt_page_id);
+    Page *p = buffer_pool_manager_->NewPage(&new_bkt_page_id);
     assert(p != nullptr);
     ret->SetBucketPageId(0, new_bkt_page_id);
-    // unpin pages
-    buffer_pool_manager_->UnpinPgImp(directory_page_id_);
-    buffer_pool_manager_->UnpinPgImp(new_bkt_page_id);
-
-  } else {
-    Page *p = buffer_pool_manager_->FetchPgImp(directory_page_id_);
-    assert(p != nullptr);
-    ret = reinterpret_cast<HashTableDirectoryPage *>(p->GetData());
+    // unpin the two pages because write data
+    buffer_pool_manager_->UnpinPage(directory_page_id_, true);
+    buffer_pool_manager_->UnpinPage(new_bkt_page_id, true);
   }
+  // get page from buffer
+  assert(directory_page_id_ != INVALID_PAGE_ID);
+  Page *p = buffer_pool_manager_->FetchPage(directory_page_id_);
+  assert(p != nullptr);
+  ret = reinterpret_cast<HashTableDirectoryPage *>(p->GetData());
+
   return ret;
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 HASH_TABLE_BUCKET_TYPE *HASH_TABLE_TYPE::FetchBucketPage(page_id_t bucket_page_id) {
   HASH_TABLE_BUCKET_TYPE *ret = nullptr;
-  Page *p = buffer_pool_manager_->FetchPgImp(bucket_page_id);
+  Page *p = buffer_pool_manager_->FetchPage(bucket_page_id);
   assert(p != nullptr);
-  ret = reinterpret_cast<HASH_TABLE_BLOCK_TYPE *>(p->GetData());
+  ret = reinterpret_cast<HASH_TABLE_BUCKET_TYPE *>(p->GetData());
   return ret;
 }
 
@@ -99,7 +100,19 @@ HASH_TABLE_BUCKET_TYPE *HASH_TABLE_TYPE::FetchBucketPage(page_id_t bucket_page_i
  *****************************************************************************/
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_TYPE::GetValue(Transaction *transaction, const KeyType &key, std::vector<ValueType> *result) {
-  return false;
+  // if (directory_page_id_ == INVALID_PAGE_ID) return false;
+  // Get the bucket corresponding to a key.
+  HashTableDirectoryPage *dir_p = FetchDirectoryPage();
+  page_id_t bucket_page_id = KeyToPageId(key, dir_p);
+  HASH_TABLE_BUCKET_TYPE *bucket = FetchBucketPage(bucket_page_id);
+  // not found!
+  if (!bucket) {
+    return false;
+  }
+  bool flag = bucket->GetValue(key, comparator_, result);
+  //unpin page false because no write
+  buffer_pool_manager_->UnpinPage(bucket_page_id, false);
+  buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
 }
 
 /*****************************************************************************
