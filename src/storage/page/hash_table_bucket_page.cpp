@@ -124,12 +124,62 @@ bool HASH_TABLE_BUCKET_TYPE::IsFull() {
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 uint32_t HASH_TABLE_BUCKET_TYPE::NumReadable() {
-  return 0;
+  uint32_t num = 0;
+
+  size_t i_num = BUCKET_ARRAY_SIZE / 8;
+  for (size_t i = 0; i < i_num; i++) {
+    uint8_t c = static_cast<uint8_t>(readable_[i]);
+    for (uint8_t j = 0; j < 8; j++) {
+      if ((c & 1) > 0) {
+        num++;
+      }
+      c >>= 1;
+    }
+  }
+
+  size_t i_remain = BUCKET_ARRAY_SIZE % 8;
+  if (i_remain > 0) {
+    uint8_t c = static_cast<uint8_t>(readable_[i_num]);
+    for (size_t j = 0; j < i_remain; j++) {
+      if ((c & 1) == 1) {
+        num++;
+      }
+      c >>= 1;
+    }
+  }
+
+  return num;
+}
+
+// storage/page/hash_table_bucket_page.cpp
+template <typename KeyType, typename ValueType, typename KeyComparator>
+MappingType *HASH_TABLE_BUCKET_TYPE::GetArrayCopy() {
+  uint32_t num = NumReadable();
+  MappingType *copy = new MappingType[num];
+  for (uint32_t i = 0, index = 0; i < BUCKET_ARRAY_SIZE; i++) {
+    if (IsReadable(i)) {
+      copy[index++] = array_[i];
+    }
+  }
+  return copy;
+}
+
+template <typename KeyType, typename ValueType, typename KeyComparator>
+void HASH_TABLE_BUCKET_TYPE::Reset() {
+  memset(occupied_, 0, sizeof(occupied_));
+  memset(readable_, 0, sizeof(readable_));
+  memset(array_, 0, sizeof(array_));
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_BUCKET_TYPE::IsEmpty() {
-  return false;
+  uint8_t mask = 255;
+  for (size_t i = 0; i < sizeof(readable_) / sizeof(readable_[0]); i++) {
+    if ((readable_[i] & mask) > 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>

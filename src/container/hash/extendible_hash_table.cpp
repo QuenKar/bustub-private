@@ -110,7 +110,7 @@ bool HASH_TABLE_TYPE::GetValue(Transaction *transaction, const KeyType &key, std
     return false;
   }
   bool flag = bucket->GetValue(key, comparator_, result);
-  //unpin page false because no write
+  // unpin page false because no write
   buffer_pool_manager_->UnpinPage(bucket_page_id, false);
   buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
 }
@@ -120,12 +120,96 @@ bool HASH_TABLE_TYPE::GetValue(Transaction *transaction, const KeyType &key, std
  *****************************************************************************/
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_TYPE::Insert(Transaction *transaction, const KeyType &key, const ValueType &value) {
-  return false;
+  // insert
+  HashTableDirectoryPage *dir_p = FetchDirectoryPage();
+  page_id_t bucket_page_id = KeyToPageId(key, dir_p);
+  HASH_TABLE_BUCKET_TYPE *bucket = FetchBucketPage(bucket_page_id);
+  // if not full, insert directly!
+  if (!bucket->IsFull()) {
+    bool flag = bucket->Insert(key, value, comparator_);
+    buffer_pool_manager_->UnpinPage(bucket_page_id, true);
+    buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), true);  // why false?
+  } else {
+    buffer_pool_manager_->UnpinPage(bucket_page_id, false);
+    buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
+    return SplitInsert(transaction, key, value);
+  }
+
+  return flag;
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_TYPE::SplitInsert(Transaction *transaction, const KeyType &key, const ValueType &value) {
-  return false;
+  HashTableDirectoryPage *dir_p = FetchDirectoryPage();
+  uint32_t old_bkt_dir_idx = KeyToDirectoryIndex(key, dir_p);
+  uint32_t old_bkt_depth = dir_p->GetLocalDepth(old_bkt_dir_idx);
+
+  // if bucket_depth > the max limit?
+  // is there a max limit?
+
+  // incr global depth
+  if (old_bkt_depth == dir_p->GetGlobalDepth()) {
+    dir_p->IncrGlobalDepth();
+  }
+
+  dir_p->IncrLocalDepth(old_bkt_dir_idx);
+  // keep the data ,then reset the old bucket
+  page_id_t old_bkt_page_id = dir_p->GetBucketPageId(old_bkt_dir_idx);
+  HASH_TABLE_BUCKET_TYPE *old_bkt_p = dir_p->GetBucketPageId(old_bkt_dir_idx);
+  uint32_t old_array_size = old_bkt_p->NumReadable();
+  MappingType *data = old_bkt_p->GetArrayCopy();
+  // reset the bucket
+  old_bkt_p->Reset();
+
+  // create and init new image bucket
+  page_id_t image_bkt_page_id;
+  Page *p = buffer_pool_manager_->NewPage(&image_bkt_page_id);
+  assert(p != nullptr);
+  HASH_TABLE_BUCKET_TYPE *new_bkt_p = reinterpret_cast<HASH_TABLE_BUCKET_TYPE *>(p);
+  uint32_t image_bkt_dir_idx = dir_p->GetSplitImageIndex(old_bkt_dir_idx);
+  dir_p->SetLocalDepth(image_bkt_dir_idx, dir_p->GetGlobalDepth());
+  dir_p->SetBucketPageId(image_bkt_dir_idx, image_bkt_page_id);
+
+  // insert the data into the two bucket
+  for (size_t i = 0; i < old_array_size; i++) {
+    MappingType tmp = data[i];
+    uint32_t target_bkt_dir_idx = KeyToDirectoryIndex(tmp.first, dir_p);
+    page_id_t target_bkt_page_id = dir_p->GetBucketPageId(target_bkt_dir_idx);
+
+    if (target_bkt_page_id == old_bkt_dir_idx) {
+      old_bkt_p->Insert(tmp.first, tmp.second, comparator_);
+    } else if (target_bkt_page_id == image_bkt_dir_idx) {
+      new_bkt_p->Insert(tmp.first, tmp.second, comparator_);
+    }
+  }
+  // delete the copy data
+  delete[] data;
+
+  // set the same local depth and page
+  uint32_t depth = dir_p->GetLocalDepth(old_bkt_dir_idx);
+  uint32_t diff = 1 << depth;
+  for (uint32_t i = old_bkt_dir_idx; i >= diff; i -= diff) {
+    dir_p->SetBucketPageId(i, old_bkt_page_id);
+    dir_p->SetLocalDepth(i, depth);
+  }
+  for (uint32_t i = old_bkt_dir_idx; i < dir_p->Size(); i += diff) {
+    dir_p->SetBucketPageId(i, old_bkt_page_id);
+    dir_p->SetLocalDepth(i, depth);
+  }
+  for (uint32_t i = image_bkt_dir_idx; i >= diff; i -= diff) {
+    dir_p->SetBucketPageId(i, image_bkt_page_id);
+    dir_p->SetLocalDepth(i, depth);
+  }
+  for (uint32_t i = image_bkt_dir_idx; i < dir_p->Size(); i += diff) {
+    dir_page->SetBucketPageId(i, image_bkt_page_id);
+    dir_page->SetLocalDepth(i, depth);
+  }
+
+  buffer_pool_manager_->UnpinPage(old_bkt_page_id, true);
+  buffer_pool_manager_->UnpinPage(image_bkt_page_id, true);
+  buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), true);
+
+  return Insert(key, value, comparator_);
 }
 
 /*****************************************************************************
