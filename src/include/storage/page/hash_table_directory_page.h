@@ -171,8 +171,6 @@ class HashTableDirectoryPage {
    */
   uint32_t GetLocalHighBit(uint32_t bucket_idx);
 
-  uint32_t GetSplitImageIndex(uint32_t bucket_idx);
-
   /**
    * VerifyIntegrity
    *
