@@ -213,7 +213,7 @@ bool BufferPoolManagerInstance::UnpinPgImp(page_id_t page_id, bool is_dirty) {
     return false;
   }
   p->pin_count_--;
-  // notes: 注意这个地方要判断一下，防止覆盖之前的dirty状态
+  // notes: 注意这个地方要判断一下，防止覆盖之前的dirty状态:假如之前is_dirty_是true，然后is_dirty是false的情况
   if (is_dirty) {
     p->is_dirty_ = true;
   }

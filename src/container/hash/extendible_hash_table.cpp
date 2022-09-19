@@ -124,11 +124,12 @@ bool HASH_TABLE_TYPE::Insert(Transaction *transaction, const KeyType &key, const
   HashTableDirectoryPage *dir_p = FetchDirectoryPage();
   page_id_t bucket_page_id = KeyToPageId(key, dir_p);
   HASH_TABLE_BUCKET_TYPE *bucket = FetchBucketPage(bucket_page_id);
+  assert(bucket != nullptr);
   // if not full, insert directly!
   if (!bucket->IsFull()) {
     bool flag = bucket->Insert(key, value, comparator_);
     buffer_pool_manager_->UnpinPage(bucket_page_id, true);
-    buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), true);  // why false?
+    buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);  // why false? director page is no change.
   } else {
     buffer_pool_manager_->UnpinPage(bucket_page_id, false);
     buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
@@ -144,8 +145,7 @@ bool HASH_TABLE_TYPE::SplitInsert(Transaction *transaction, const KeyType &key, 
   uint32_t old_bkt_dir_idx = KeyToDirectoryIndex(key, dir_p);
   uint32_t old_bkt_depth = dir_p->GetLocalDepth(old_bkt_dir_idx);
 
-  // if bucket_depth > the max limit?
-  // is there a max limit?
+  // is there a max limit for bucket number?
 
   // incr global depth
   if (old_bkt_depth == dir_p->GetGlobalDepth()) {
@@ -167,7 +167,7 @@ bool HASH_TABLE_TYPE::SplitInsert(Transaction *transaction, const KeyType &key, 
   assert(p != nullptr);
   HASH_TABLE_BUCKET_TYPE *new_bkt_p = reinterpret_cast<HASH_TABLE_BUCKET_TYPE *>(p);
   uint32_t image_bkt_dir_idx = dir_p->GetSplitImageIndex(old_bkt_dir_idx);
-  dir_p->SetLocalDepth(image_bkt_dir_idx, dir_p->GetGlobalDepth());
+  dir_p->SetLocalDepth(image_bkt_dir_idx, dir_p->GetLocalDepth(old_bkt_dir_idx));
   dir_p->SetBucketPageId(image_bkt_dir_idx, image_bkt_page_id);
 
   // insert the data into the two bucket
@@ -217,14 +217,63 @@ bool HASH_TABLE_TYPE::SplitInsert(Transaction *transaction, const KeyType &key, 
  *****************************************************************************/
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_TYPE::Remove(Transaction *transaction, const KeyType &key, const ValueType &value) {
-  return false;
+  // Get the bucket corresponding to a key.
+  HashTableDirectoryPage *dir_p = FetchDirectoryPage();
+  uint32_t bkt_dir_idx = KeyToDirectoryIndex(key, dir_p);
+  uint32_t split_bkt_dir_idx = dir_p->GetSplitImageIndex(bkt_dir_idx);
+
+  page_id_t bucket_page_id = KeyToPageId(key, dir_p);
+  HASH_TABLE_BUCKET_TYPE *bucket = FetchBucketPage(bucket_page_id);
+  assert(bucket != nullptr);
+
+  // remove element and unpin pages
+  bool flg = bucket->Remove(key, value, comparator_);
+  buffer_pool_manager_->UnpinPage(bucket_page_id, true);
+  buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
+
+  // merge
+  if ((bucket->IsEmpty()) && (dir_p->GetLocalDepth(bkt_dir_idx) > 0) &&
+      (dir_p->GetLocalDepth(bkt_dir_idx) == dir_p->GetLocalDepth(split_bkt_dir_idx))) {
+    Merge(transaction, key, value);
+  }
+  return flg;
 }
 
 /*****************************************************************************
  * MERGE
  *****************************************************************************/
 template <typename KeyType, typename ValueType, typename KeyComparator>
-void HASH_TABLE_TYPE::Merge(Transaction *transaction, const KeyType &key, const ValueType &value) {}
+void HASH_TABLE_TYPE::Merge(Transaction *transaction, const KeyType &key, const ValueType &value) {
+  // Get the bucket corresponding to a key.
+  HashTableDirectoryPage *dir_p = FetchDirectoryPage();
+  uint32_t bkt_dir_idx = KeyToDirectoryIndex(key, dir_p);
+  uint32_t split_bkt_dir_idx = dir_p->GetSplitImageIndex(bkt_dir_idx);
+
+  page_id_t bkt_page_id = dir_p->GetBucketPageId(bkt_dir_idx);
+  page_id_t split_bkt_page_id = dir_p->GetBucketPageId(split_bkt_dir_idx);
+
+  buffer_pool_manager_->UnpinPage(bkt_page_id);
+  buffer_pool_manager_->DeletePage(bkt_page_id);
+
+  dir_p->SetBucketPageId(bkt_dir_idx, split_bkt_page_id);
+  dir_p->DecrLocalDepth(bkt_dir_idx);
+  dir_p->DecrLocalDepth(split_bkt_dir_idx);
+
+  for (uint32_t i = 0; i < dir_p->Size(); i++) {
+    if (dir_p->GetBucketPageId(i) == bkt_page_id) {
+      dir_p->SetBucketPageId(i, split_bkt_page_id);
+      dir_p->SetLocalDepth(i, dir_p->GetLocalDepth(bkt_dir_idx));
+    }
+  }
+
+  while (dir_p->CanShrink()) {
+    dir_p->DecrGlobalDepth();
+  }
+  // unpin directory page
+  buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), true);
+
+  return;
+}
 
 /*****************************************************************************
  * GETGLOBALDEPTH - DO NOT TOUCH
