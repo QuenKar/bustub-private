@@ -72,9 +72,6 @@ void HashTableDirectoryPage::DecrLocalDepth(uint32_t bucket_idx) { local_depths_
 uint32_t HashTableDirectoryPage::GetLocalHighBit(uint32_t bucket_idx) { return 0; }
 
 uint32_t HashTableDirectoryPage::GetSplitImageIndex(uint32_t bucket_idx) {
-  // Example: 当对应的localdepth是3时：
-  // 1<<(3-1) = 0000....00100
-  // 具体用途后面再说
   return bucket_idx ^ (1 << (local_depths_[bucket_idx] - 1));
 }
 

@@ -22,6 +22,7 @@
 
 namespace bustub {
 
+#define MAX_BUCKET_DEPTH 9
 /**
  *
  * Directory Page for extendible hash table.
