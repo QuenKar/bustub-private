@@ -188,12 +188,12 @@ class HashTableDirectoryPage {
   void PrintDirectory();
 
  private:
-  page_id_t page_id_;                                    // get page(page_id) from buffer pool
-  lsn_t lsn_;                                            //?
-  uint32_t global_depth_{0};                             // global depth.
-  uint8_t local_depths_[DIRECTORY_ARRAY_SIZE];           // save local depth for each bucket.
-  page_id_t bucket_page_ids_[4 * DIRECTORY_ARRAY_SIZE];  // The ith element in bucket_page_ids_ is the page_id for the
-                                                         // ith bucket.
+  page_id_t page_id_;                                // get page(page_id) from buffer pool
+  lsn_t lsn_;                                        //?
+  uint32_t global_depth_{0};                         // global depth.
+  uint8_t local_depths_[DIRECTORY_ARRAY_SIZE];       // save local depth for each bucket.
+  page_id_t bucket_page_ids_[DIRECTORY_ARRAY_SIZE];  // The ith element in bucket_page_ids_ is the page_id for the
+                                                     // ith bucket.
 };
 
 }  // namespace bustub

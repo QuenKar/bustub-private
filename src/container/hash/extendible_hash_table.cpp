@@ -102,7 +102,7 @@ bool HASH_TABLE_TYPE::GetValue(Transaction *transaction, const KeyType &key, std
   HashTableDirectoryPage *dir_p = FetchDirectoryPage();
   page_id_t bucket_page_id = KeyToPageId(key, dir_p);
   HASH_TABLE_BUCKET_TYPE *bucket = FetchBucketPage(bucket_page_id);
-
+  // bucket->PrintBucket();
   bool flag = bucket->GetValue(key, comparator_, result);
   // unpin page false because no write
   buffer_pool_manager_->UnpinPage(bucket_page_id, false);

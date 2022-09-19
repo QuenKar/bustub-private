@@ -23,7 +23,7 @@ template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_BUCKET_TYPE::GetValue(KeyType key, KeyComparator cmp, std::vector<ValueType> *result) {
   bool flag = false;
   for (size_t bucket_idx = 0; bucket_idx < BUCKET_ARRAY_SIZE; bucket_idx++) {
-    if (cmp(array_[bucket_idx].first, key) == 0) {
+    if (IsReadable(bucket_idx) && cmp(array_[bucket_idx].first, key) == 0) {  // need to tell it readable, so shit!!!
       result->push_back(array_[bucket_idx].second);
       flag = true;
     }
