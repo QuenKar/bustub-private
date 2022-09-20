@@ -59,6 +59,7 @@ page_id_t HASH_TABLE_TYPE::KeyToPageId(KeyType key, HashTableDirectoryPage *dir_
 template <typename KeyType, typename ValueType, typename KeyComparator>
 HashTableDirectoryPage *HASH_TABLE_TYPE::FetchDirectoryPage() {
   HashTableDirectoryPage *ret = nullptr;
+  dir_lock_.lock();
   if (directory_page_id_ == INVALID_PAGE_ID) {
     // new a directory page
     page_id_t new_dir_page_id;
@@ -76,6 +77,7 @@ HashTableDirectoryPage *HASH_TABLE_TYPE::FetchDirectoryPage() {
     buffer_pool_manager_->UnpinPage(new_dir_page_id, true);
     buffer_pool_manager_->UnpinPage(new_bkt_page_id, true);
   }
+  dir_lock_.unlock();
   // get page from buffer
   assert(directory_page_id_ != INVALID_PAGE_ID);
   Page *p = buffer_pool_manager_->FetchPage(directory_page_id_);
@@ -86,10 +88,13 @@ HashTableDirectoryPage *HASH_TABLE_TYPE::FetchDirectoryPage() {
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
-HASH_TABLE_BUCKET_TYPE *HASH_TABLE_TYPE::FetchBucketPage(page_id_t bucket_page_id) {
-  Page *p = buffer_pool_manager_->FetchPage(bucket_page_id);
-  assert(p != nullptr);
-  return reinterpret_cast<HASH_TABLE_BUCKET_TYPE *>(p->GetData());
+Page *HASH_TABLE_TYPE::FetchBucketPage(page_id_t bucket_page_id) {
+  return buffer_pool_manager_->FetchPage(bucket_page_id);
+}
+
+template <typename KeyType, typename ValueType, typename KeyComparator>
+HASH_TABLE_BUCKET_TYPE *HASH_TABLE_TYPE::GetBucketData(Page *page) {
+  return reinterpret_cast<HASH_TABLE_BUCKET_TYPE *>(page->GetData());
 }
 
 /*****************************************************************************
@@ -98,15 +103,19 @@ HASH_TABLE_BUCKET_TYPE *HASH_TABLE_TYPE::FetchBucketPage(page_id_t bucket_page_i
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_TYPE::GetValue(Transaction *transaction, const KeyType &key, std::vector<ValueType> *result) {
   // if (directory_page_id_ == INVALID_PAGE_ID) return false;
+  table_latch_.RLock();
   // Get the bucket corresponding to a key.
   HashTableDirectoryPage *dir_p = FetchDirectoryPage();
   page_id_t bucket_page_id = KeyToPageId(key, dir_p);
-  HASH_TABLE_BUCKET_TYPE *bucket = FetchBucketPage(bucket_page_id);
+  Page *bucket_page = FetchBucketPage(bucket_page_id);
+  HASH_TABLE_BUCKET_TYPE *bucket = GetBucketData(bucket_page);
   // bucket->PrintBucket();
   bool flag = bucket->GetValue(key, comparator_, result);
   // unpin page false because no write
   buffer_pool_manager_->UnpinPage(bucket_page_id, false);
   buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
+
+  table_latch_.RUnlock();
 
   return flag;
 }
@@ -117,31 +126,48 @@ bool HASH_TABLE_TYPE::GetValue(Transaction *transaction, const KeyType &key, std
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_TYPE::Insert(Transaction *transaction, const KeyType &key, const ValueType &value) {
   // insert
+  table_latch_.RLock();
+
   HashTableDirectoryPage *dir_p = FetchDirectoryPage();
   page_id_t bucket_page_id = KeyToPageId(key, dir_p);
-  HASH_TABLE_BUCKET_TYPE *bucket = FetchBucketPage(bucket_page_id);
+  Page *bucket_page = FetchBucketPage(bucket_page_id);
+  bucket_page->WLatch();
+  HASH_TABLE_BUCKET_TYPE *bucket = GetBucketData(bucket_page);
   assert(bucket != nullptr);
   // if not full, insert directly!
   if (!bucket->IsFull()) {
     bool flag = bucket->Insert(key, value, comparator_);
+    bucket_page->WUnlatch();
     buffer_pool_manager_->UnpinPage(bucket_page_id, true);
     buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);  // why false? director page is no change.
+    table_latch_.RUnlock();
     return flag;
   } else {
+    bucket_page->WUnlatch();
     buffer_pool_manager_->UnpinPage(bucket_page_id, false);
     buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
+
+    table_latch_.RUnlock();
+
     return SplitInsert(transaction, key, value);
   }
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_TYPE::SplitInsert(Transaction *transaction, const KeyType &key, const ValueType &value) {
+  table_latch_.WLock();
   HashTableDirectoryPage *dir_p = FetchDirectoryPage();
   uint32_t old_bkt_dir_idx = KeyToDirectoryIndex(key, dir_p);
   uint32_t old_bkt_depth = dir_p->GetLocalDepth(old_bkt_dir_idx);
 
-  // is there a max limit for bucket number?
-
+  // a max limit for bucket count
+  // bucket max count is to 512.
+  // #define DIRECTORY_ARRAY_SIZE 512
+  if (old_bkt_depth >= MAX_BUCKET_DEPTH) {
+    assert(buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false));
+    table_latch_.WUnlock();
+    return false;
+  }
   // incr global depth
   if (old_bkt_depth == dir_p->GetGlobalDepth()) {
     dir_p->IncrGlobalDepth();
@@ -150,7 +176,9 @@ bool HASH_TABLE_TYPE::SplitInsert(Transaction *transaction, const KeyType &key, 
   dir_p->IncrLocalDepth(old_bkt_dir_idx);
   // keep the data ,then reset the old bucket
   page_id_t old_bkt_page_id = dir_p->GetBucketPageId(old_bkt_dir_idx);
-  HASH_TABLE_BUCKET_TYPE *old_bkt_p = FetchBucketPage(old_bkt_page_id);
+  Page *bucket_page1 = FetchBucketPage(old_bkt_page_id);
+  bucket_page1->WLatch();
+  HASH_TABLE_BUCKET_TYPE *old_bkt_p = GetBucketData(bucket_page1);
   uint32_t old_array_size = old_bkt_p->NumReadable();
   MappingType *data = old_bkt_p->GetArrayCopy();
   // reset the bucket
@@ -158,9 +186,11 @@ bool HASH_TABLE_TYPE::SplitInsert(Transaction *transaction, const KeyType &key, 
 
   // create and init new image bucket
   page_id_t image_bkt_page_id;
-  Page *p = buffer_pool_manager_->NewPage(&image_bkt_page_id);
-  assert(p != nullptr);
-  HASH_TABLE_BUCKET_TYPE *new_bkt_p = reinterpret_cast<HASH_TABLE_BUCKET_TYPE *>(p->GetData());
+  Page *bucket_page2 = buffer_pool_manager_->NewPage(&image_bkt_page_id);
+  bucket_page2->WLatch();
+  assert(bucket_page2 != nullptr);
+  HASH_TABLE_BUCKET_TYPE *new_bkt_p = reinterpret_cast<HASH_TABLE_BUCKET_TYPE *>(bucket_page2->GetData());
+
   uint32_t image_bkt_dir_idx = dir_p->GetSplitImageIndex(old_bkt_dir_idx);
   dir_p->SetLocalDepth(image_bkt_dir_idx, dir_p->GetLocalDepth(old_bkt_dir_idx));
   dir_p->SetBucketPageId(image_bkt_dir_idx, image_bkt_page_id);
@@ -199,10 +229,14 @@ bool HASH_TABLE_TYPE::SplitInsert(Transaction *transaction, const KeyType &key, 
     dir_p->SetBucketPageId(i, image_bkt_page_id);
     dir_p->SetLocalDepth(i, depth);
   }
+  bucket_page1->WUnlatch();
+  bucket_page2->WUnlatch();
 
   buffer_pool_manager_->UnpinPage(old_bkt_page_id, true);
   buffer_pool_manager_->UnpinPage(image_bkt_page_id, true);
   buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), true);
+
+  table_latch_.WUnlock();
 
   return Insert(transaction, key, value);
 }
@@ -213,14 +247,21 @@ bool HASH_TABLE_TYPE::SplitInsert(Transaction *transaction, const KeyType &key, 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_TYPE::Remove(Transaction *transaction, const KeyType &key, const ValueType &value) {
   // Get the bucket corresponding to a key.
+  table_latch_.RLock();
   HashTableDirectoryPage *dir_p = FetchDirectoryPage();
   uint32_t bkt_dir_idx = KeyToDirectoryIndex(key, dir_p);
   page_id_t bucket_page_id = KeyToPageId(key, dir_p);
-  HASH_TABLE_BUCKET_TYPE *bucket = FetchBucketPage(bucket_page_id);
+
+  Page *bucket_page = FetchBucketPage(bucket_page_id);
+  bucket_page->WLatch();
+  HASH_TABLE_BUCKET_TYPE *bucket = GetBucketData(bucket_page);
   assert(bucket != nullptr);
 
   // remove element and unpin pages
   bool flg = bucket->Remove(key, value, comparator_);
+
+  bucket_page->WUnlatch();
+
   buffer_pool_manager_->UnpinPage(bucket_page_id, true);
   buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
 
@@ -228,8 +269,10 @@ bool HASH_TABLE_TYPE::Remove(Transaction *transaction, const KeyType &key, const
   uint32_t split_bkt_dir_idx = dir_p->GetSplitImageIndex(bkt_dir_idx);
   if ((bucket->IsEmpty()) && (dir_p->GetLocalDepth(bkt_dir_idx) > 0) &&
       (dir_p->GetLocalDepth(bkt_dir_idx) == dir_p->GetLocalDepth(split_bkt_dir_idx))) {
+    table_latch_.RUnlock();
     Merge(transaction, key, value);
   }
+
   return flg;
 }
 
@@ -239,6 +282,7 @@ bool HASH_TABLE_TYPE::Remove(Transaction *transaction, const KeyType &key, const
 template <typename KeyType, typename ValueType, typename KeyComparator>
 void HASH_TABLE_TYPE::Merge(Transaction *transaction, const KeyType &key, const ValueType &value) {
   // Get the bucket corresponding to a key.
+  table_latch_.WLock();
   HashTableDirectoryPage *dir_p = FetchDirectoryPage();
   uint32_t bkt_dir_idx = KeyToDirectoryIndex(key, dir_p);
   uint32_t split_bkt_dir_idx = dir_p->GetSplitImageIndex(bkt_dir_idx);
@@ -265,6 +309,8 @@ void HASH_TABLE_TYPE::Merge(Transaction *transaction, const KeyType &key, const 
   }
   // unpin directory page
   buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), true);
+
+  table_latch_.WUnlock();
 
   return;
 }
