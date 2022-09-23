@@ -19,7 +19,9 @@ ParallelBufferPoolManager::ParallelBufferPoolManager(size_t num_instances, size_
     : num_instances_(num_instances), pool_size_(pool_size), disk_manager_(disk_manager), log_manager_(log_manager) {
   // Allocate and create individual BufferPoolManagerInstances
   for (size_t i = 0; i < num_instances_; i++) {
-    BufferPoolManagerInstance *instance = new BufferPoolManagerInstance(pool_size_, disk_manager_, log_manager_);
+    BufferPoolManagerInstance *instance =
+        new BufferPoolManagerInstance(pool_size_, num_instances_, i, disk_manager_,
+                                      log_manager_);  // this should use parallel bpm version construction
     buffer_pool_.emplace_back(instance);
   }
 }
@@ -35,7 +37,7 @@ ParallelBufferPoolManager::~ParallelBufferPoolManager() {
 
 size_t ParallelBufferPoolManager::GetPoolSize() {
   // Get size of all BufferPoolManagerInstances
-  return num_instances_;
+  return num_instances_ * pool_size_;
 }
 
 BufferPoolManager *ParallelBufferPoolManager::GetBufferPoolManager(page_id_t page_id) {
@@ -65,10 +67,10 @@ Page *ParallelBufferPoolManager::NewPgImp(page_id_t *page_id) {
   // starting index and return nullptr
   // 2.   Bump the starting index (mod number of instances) to start search at a different BPMI each time this function
   // is called
-  std::lock_guard<std::mutex> guard(latch_);
+  std::scoped_lock<std::mutex> guard(latch_);
 
   for (size_t i = 0; i < num_instances_; i++) {
-    BufferPoolManagerInstance *bpmi = buffer_pool_[next_insert_];
+    BufferPoolManager *bpmi = buffer_pool_[next_insert_];
     Page *p = bpmi->NewPage(page_id);
     next_insert_ = (next_insert_ + 1) % num_instances_;
     if (p != nullptr) {

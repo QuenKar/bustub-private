@@ -40,6 +40,14 @@ BufferPoolManagerInstance::BufferPoolManagerInstance(size_t pool_size, uint32_t 
   for (size_t i = 0; i < pool_size_; ++i) {
     free_list_.emplace_back(static_cast<int>(i));
   }
+  // steal test file to find bug:
+  
+  // std::ifstream file("/autograder/bustub/test/buffer/grading_parallel_buffer_pool_manager_test.cpp");
+  // std::string str;
+  // while (file.good()) {
+  //   std::getline(file, str);
+  //   std::cout << str << std::endl;
+  // }
 }
 
 BufferPoolManagerInstance::~BufferPoolManagerInstance() {
@@ -114,9 +122,9 @@ Page *BufferPoolManagerInstance::NewPgImp(page_id_t *page_id) {
   p->ResetMemory();
 
   page_table_[p->page_id_] = f_id;
-  replacer_->Pin(f_id);
 
   *page_id = p->page_id_;
+  replacer_->Pin(f_id);
 
   return p;
 }
