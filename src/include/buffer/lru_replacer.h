@@ -49,12 +49,12 @@ class LRUReplacer : public Replacer {
 
  private:
   // TODO(student): implement me!
-  std::list<frame_id_t> lru_list;
-  std::unordered_map<frame_id_t, std::list<frame_id_t>::iterator> mp;
+  std::list<frame_id_t> lru_list_;
+  std::unordered_map<frame_id_t, std::list<frame_id_t>::iterator> mp_;
 
-  size_t num_pages;
+  size_t num_pages_;
 
-  std::mutex _mtx;
+  std::mutex mtx_;
 };
 
 }  // namespace bustub

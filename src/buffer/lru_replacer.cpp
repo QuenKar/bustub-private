@@ -14,7 +14,7 @@
 
 namespace bustub {
 
-LRUReplacer::LRUReplacer(size_t num_pages) { this->num_pages = num_pages; }
+LRUReplacer::LRUReplacer(size_t num_pages) { this->num_pages_ = num_pages; }
 
 LRUReplacer::~LRUReplacer() = default;
 
@@ -22,41 +22,45 @@ LRUReplacer::~LRUReplacer() = default;
 
 //从lru中选出最久未访问的frame，返回frame_id
 bool LRUReplacer::Victim(frame_id_t *frame_id) {
-  std::lock_guard<std::mutex> guard(_mtx);
+  std::lock_guard<std::mutex> guard(mtx_);
 
-  if (lru_list.empty()) return false;
-  *frame_id = lru_list.back();
-  lru_list.pop_back();
-  mp.erase(*frame_id);
+  if (lru_list_.empty()) {
+    return false;
+  }
+  *frame_id = lru_list_.back();
+  lru_list_.pop_back();
+  mp_.erase(*frame_id);
   return true;
 }
 
 // frame不会被替换
 void LRUReplacer::Pin(frame_id_t frame_id) {
-  std::lock_guard<std::mutex> guard(_mtx);
+  std::lock_guard<std::mutex> guard(mtx_);
 
-  auto it = mp.find(frame_id);
-  if (it == mp.end()) return;
+  auto it = mp_.find(frame_id);
+  if (it == mp_.end()) {
+    return;
+  }
 
-  lru_list.erase(mp[frame_id]);
-  mp.erase(frame_id);
+  lru_list_.erase(mp_[frame_id]);
+  mp_.erase(frame_id);
 }
 
 // frame添加到lru中，将会被替换
 void LRUReplacer::Unpin(frame_id_t frame_id) {
-  std::lock_guard<std::mutex> guard(_mtx);
+  std::lock_guard<std::mutex> guard(mtx_);
   //若已经存在，就返回
-  auto it = mp.find(frame_id);
-  if (it != mp.end()) return;
-  if (lru_list.size() < num_pages) {
-    lru_list.push_front(frame_id);
-    mp[frame_id] = lru_list.begin();
+  auto it = mp_.find(frame_id);
+  if (it != mp_.end()) return;
+  if (lru_list_.size() < num_pages_) {
+    lru_list_.push_front(frame_id);
+    mp_[frame_id] = lru_list_.begin();
   } else {
     //容器满了
     return;
   }
 }
 
-size_t LRUReplacer::Size() { return lru_list.size(); }
+size_t LRUReplacer::Size() { return lru_list_.size(); }
 
 }  // namespace bustub

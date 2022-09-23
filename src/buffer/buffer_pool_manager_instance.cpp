@@ -50,7 +50,9 @@ BufferPoolManagerInstance::~BufferPoolManagerInstance() {
 bool BufferPoolManagerInstance::FlushPgImp(page_id_t page_id) {
   std::lock_guard<std::mutex> guard(latch_);
   // Make sure you call DiskManager::WritePage!
-  if (page_id == INVALID_PAGE_ID) return false;
+  if (page_id == INVALID_PAGE_ID) {
+    return false;
+  }
   // find the page and write data to disk page.
 
   auto iter = page_table_.find(page_id);
@@ -182,13 +184,15 @@ bool BufferPoolManagerInstance::DeletePgImp(page_id_t page_id) {
   std::lock_guard<std::mutex> guard(latch_);
 
   auto iter = page_table_.find(page_id);
-  if (iter == page_table_.end()) return true;
-
+  if (iter == page_table_.end()) {
+    return true;
+  }
   frame_id_t f_id = iter->second;
 
   Page *p = &pages_[f_id];
-  if (p->pin_count_ != 0) return false;
-
+  if (p->pin_count_ != 0) {
+    return false;
+  }
   page_table_.erase(iter);
   DeallocatePage(page_id);
 
@@ -205,8 +209,9 @@ bool BufferPoolManagerInstance::UnpinPgImp(page_id_t page_id, bool is_dirty) {
   std::lock_guard<std::mutex> guard(latch_);
 
   auto iter = page_table_.find(page_id);
-  if (iter == page_table_.end()) return false;
-
+  if (iter == page_table_.end()) {
+    return false;
+  }
   frame_id_t f_id = iter->second;
   Page *p = &pages_[f_id];
   if (p->pin_count_ <= 0) {
