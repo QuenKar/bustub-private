@@ -202,7 +202,7 @@ bool BufferPoolManagerInstance::DeletePgImp(page_id_t page_id) {
 
   free_list_.push_back(f_id);
 
-  return false;
+  return true;
 }
 
 bool BufferPoolManagerInstance::UnpinPgImp(page_id_t page_id, bool is_dirty) {

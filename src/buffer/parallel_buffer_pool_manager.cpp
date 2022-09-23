@@ -68,10 +68,10 @@ Page *ParallelBufferPoolManager::NewPgImp(page_id_t *page_id) {
   std::lock_guard<std::mutex> guard(latch_);
 
   for (size_t i = 0; i < num_instances_; i++) {
-    BufferPoolManagerInstance *bpmi = buffer_pool_[next_insert];
+    BufferPoolManagerInstance *bpmi = buffer_pool_[next_insert_];
     Page *p = bpmi->NewPage(page_id);
-    next_insert = (next_insert + 1) % num_instances_;
-    if (p) {
+    next_insert_ = (next_insert_ + 1) % num_instances_;
+    if (p != nullptr) {
       return p;
     }
   }

@@ -51,7 +51,9 @@ void LRUReplacer::Unpin(frame_id_t frame_id) {
   std::lock_guard<std::mutex> guard(mtx_);
   //若已经存在，就返回
   auto it = mp_.find(frame_id);
-  if (it != mp_.end()) return;
+  if (it != mp_.end()) {
+    return;
+  }
   if (lru_list_.size() < num_pages_) {
     lru_list_.push_front(frame_id);
     mp_[frame_id] = lru_list_.begin();

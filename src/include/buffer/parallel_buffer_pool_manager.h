@@ -102,7 +102,7 @@ class ParallelBufferPoolManager : public BufferPoolManager {
   /** buffer pool*/
   std::vector<BufferPoolManagerInstance *> buffer_pool_;
   // RR insert way: the next position.
-  size_t next_insert = 0;
+  size_t next_insert_ = 0;
 
   std::mutex latch_;
 };
