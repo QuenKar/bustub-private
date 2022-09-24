@@ -12,7 +12,6 @@
 
 #pragma once
 
-#include <mutex>
 #include <queue>
 #include <string>
 #include <vector>

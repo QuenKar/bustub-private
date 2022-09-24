@@ -35,7 +35,6 @@ void HashTableDirectoryPage::IncrGlobalDepth() {
     local_depths_[new_idx] = local_depths_[org_idx];
   }
   global_depth_++;
-  return;
 }
 
 void HashTableDirectoryPage::DecrGlobalDepth() { global_depth_--; }

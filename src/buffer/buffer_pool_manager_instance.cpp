@@ -41,7 +41,6 @@ BufferPoolManagerInstance::BufferPoolManagerInstance(size_t pool_size, uint32_t 
     free_list_.emplace_back(static_cast<int>(i));
   }
   // steal test file to find bug:
-  
   // std::ifstream file("/autograder/bustub/test/buffer/grading_parallel_buffer_pool_manager_test.cpp");
   // std::string str;
   // while (file.good()) {
@@ -165,7 +164,7 @@ Page *BufferPoolManagerInstance::FetchPgImp(page_id_t page_id) {
       page_table_.erase(p->GetPageId());
 
     } else {
-      //没有找到f_id
+      // 没有找到f_id
       return nullptr;
     }
   }

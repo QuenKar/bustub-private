@@ -64,7 +64,7 @@ HashTableDirectoryPage *HASH_TABLE_TYPE::FetchDirectoryPage() {
     // new a directory page
     page_id_t new_dir_page_id;
     Page *p = buffer_pool_manager_->NewPage(&new_dir_page_id);
-    assert(p != nullptr);
+    // assert(p != nullptr);
     directory_page_id_ = new_dir_page_id;
     ret = reinterpret_cast<HashTableDirectoryPage *>(p->GetData());
     ret->SetPageId(directory_page_id_);
@@ -108,9 +108,11 @@ bool HASH_TABLE_TYPE::GetValue(Transaction *transaction, const KeyType &key, std
   HashTableDirectoryPage *dir_p = FetchDirectoryPage();
   page_id_t bucket_page_id = KeyToPageId(key, dir_p);
   Page *bucket_page = FetchBucketPage(bucket_page_id);
+  bucket_page->RLatch();
   HASH_TABLE_BUCKET_TYPE *bucket = GetBucketData(bucket_page);
   // bucket->PrintBucket();
   bool flag = bucket->GetValue(key, comparator_, result);
+  bucket_page->RUnlatch();
   // unpin page false because no write
   buffer_pool_manager_->UnpinPage(bucket_page_id, false);
   buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
@@ -142,15 +144,15 @@ bool HASH_TABLE_TYPE::Insert(Transaction *transaction, const KeyType &key, const
     buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);  // why false? director page is no change.
     table_latch_.RUnlock();
     return flag;
-  } else {
-    bucket_page->WUnlatch();
-    buffer_pool_manager_->UnpinPage(bucket_page_id, false);
-    buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
-
-    table_latch_.RUnlock();
-
-    return SplitInsert(transaction, key, value);
   }
+
+  bucket_page->WUnlatch();
+  buffer_pool_manager_->UnpinPage(bucket_page_id, false);
+  buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
+
+  table_latch_.RUnlock();
+
+  return SplitInsert(transaction, key, value);
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
@@ -197,8 +199,8 @@ bool HASH_TABLE_TYPE::SplitInsert(Transaction *transaction, const KeyType &key, 
 
   // insert the data into the two bucket
   for (size_t i = 0; i < old_array_size; i++) {
-    MappingType tmp = data[i];
-    uint32_t target_bkt_dir_idx = Hash(tmp.first) & dir_p->GetLocalDepthMask(old_bkt_dir_idx);
+    MappingType &tmp = data[i];
+    uint32_t target_bkt_dir_idx = Hash(tmp.first) & (dir_p->GetLocalDepthMask(old_bkt_dir_idx));
     page_id_t target_bkt_page_id = dir_p->GetBucketPageId(target_bkt_dir_idx);
 
     if (target_bkt_page_id == old_bkt_page_id) {
@@ -211,24 +213,25 @@ bool HASH_TABLE_TYPE::SplitInsert(Transaction *transaction, const KeyType &key, 
   delete[] data;
 
   // set the same local depth and page
-  uint32_t depth = dir_p->GetLocalDepth(old_bkt_dir_idx);
-  uint32_t diff = 1 << depth;
+  uint32_t localdepth = dir_p->GetLocalDepth(old_bkt_dir_idx);
+  uint32_t diff = 1 << localdepth;
   for (uint32_t i = old_bkt_dir_idx; i >= diff; i -= diff) {
     dir_p->SetBucketPageId(i, old_bkt_page_id);
-    dir_p->SetLocalDepth(i, depth);
+    dir_p->SetLocalDepth(i, localdepth);
   }
   for (uint32_t i = old_bkt_dir_idx; i < dir_p->Size(); i += diff) {
     dir_p->SetBucketPageId(i, old_bkt_page_id);
-    dir_p->SetLocalDepth(i, depth);
+    dir_p->SetLocalDepth(i, localdepth);
   }
   for (uint32_t i = image_bkt_dir_idx; i >= diff; i -= diff) {
     dir_p->SetBucketPageId(i, image_bkt_page_id);
-    dir_p->SetLocalDepth(i, depth);
+    dir_p->SetLocalDepth(i, localdepth);
   }
   for (uint32_t i = image_bkt_dir_idx; i < dir_p->Size(); i += diff) {
     dir_p->SetBucketPageId(i, image_bkt_page_id);
-    dir_p->SetLocalDepth(i, depth);
+    dir_p->SetLocalDepth(i, localdepth);
   }
+
   bucket_page1->WUnlatch();
   bucket_page2->WUnlatch();
 
@@ -273,6 +276,7 @@ bool HASH_TABLE_TYPE::Remove(Transaction *transaction, const KeyType &key, const
     Merge(transaction, key, value);
   }
 
+  table_latch_.RUnlock();  // deadlock！！！notes that.
   return flg;
 }
 
@@ -311,8 +315,6 @@ void HASH_TABLE_TYPE::Merge(Transaction *transaction, const KeyType &key, const 
   buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), true);
 
   table_latch_.WUnlock();
-
-  return;
 }
 
 /*****************************************************************************

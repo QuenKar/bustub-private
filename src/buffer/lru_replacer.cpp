@@ -20,7 +20,7 @@ LRUReplacer::~LRUReplacer() = default;
 
 // lru cache 双向链表，左边是刚访问过的frame，右边是最久未访问的frame
 
-//从lru中选出最久未访问的frame，返回frame_id
+// 从lru中选出最久未访问的frame，返回frame_id
 bool LRUReplacer::Victim(frame_id_t *frame_id) {
   std::lock_guard<std::mutex> guard(mtx_);
 

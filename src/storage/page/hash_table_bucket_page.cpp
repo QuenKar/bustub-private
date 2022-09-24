@@ -89,7 +89,7 @@ void HASH_TABLE_BUCKET_TYPE::RemoveAt(uint32_t bucket_idx) {
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_BUCKET_TYPE::IsOccupied(uint32_t bucket_idx) const {
   uint8_t c = static_cast<uint8_t>(occupied_[bucket_idx / 8]);
-  return (c & (1 << (bucket_idx % 8)));
+  return (c & (1 << (bucket_idx % 8))) != 0;
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
@@ -102,7 +102,7 @@ void HASH_TABLE_BUCKET_TYPE::SetOccupied(uint32_t bucket_idx) {
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_BUCKET_TYPE::IsReadable(uint32_t bucket_idx) const {
   uint8_t c = static_cast<uint8_t>(readable_[bucket_idx / 8]);
-  return (c & (1 << (bucket_idx % 8)));
+  return (c & (1 << (bucket_idx % 8))) != 0;
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
