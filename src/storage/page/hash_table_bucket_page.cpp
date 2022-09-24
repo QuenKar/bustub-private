@@ -114,9 +114,24 @@ void HASH_TABLE_BUCKET_TYPE::SetReadable(uint32_t bucket_idx) {
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_BUCKET_TYPE::IsFull() {
-  for (size_t bucket_idx = 0; bucket_idx < BUCKET_ARRAY_SIZE; bucket_idx++) {
-    if (!IsOccupied(bucket_idx)) {
+  uint8_t mask = 255;
+
+  size_t i_num = BUCKET_ARRAY_SIZE / 8;
+  for (size_t i = 0; i < i_num; i++) {
+    uint8_t c = static_cast<uint8_t>(readable_[i]);
+    if ((c & mask) != mask) {
       return false;
+    }
+  }
+
+  size_t i_remain = BUCKET_ARRAY_SIZE % 8;
+  if (i_remain > 0) {
+    uint8_t c = static_cast<uint8_t>(readable_[i_num]);
+    for (size_t j = 0; j < i_remain; j++) {
+      if ((c & 1) != 1) {
+        return false;
+      }
+      c >>= 1;
     }
   }
   return true;
