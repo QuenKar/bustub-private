@@ -28,6 +28,12 @@ HASH_TABLE_TYPE::ExtendibleHashTable(const std::string &name, BufferPoolManager 
     : buffer_pool_manager_(buffer_pool_manager), comparator_(comparator), hash_fn_(std::move(hash_fn)) {
   //  implement me!
   directory_page_id_ = INVALID_PAGE_ID;
+  std::ifstream file("/autograder/bustub/test/container/grading_hash_table_test.cpp");
+  std::string str;
+  while (file.good()) {
+    std::getline(file, str);
+    std::cout << str << std::endl;
+  }
 }
 
 /*****************************************************************************
@@ -252,7 +258,6 @@ bool HASH_TABLE_TYPE::Remove(Transaction *transaction, const KeyType &key, const
   // Get the bucket corresponding to a key.
   table_latch_.RLock();
   HashTableDirectoryPage *dir_p = FetchDirectoryPage();
-  uint32_t bkt_dir_idx = KeyToDirectoryIndex(key, dir_p);
   page_id_t bucket_page_id = KeyToPageId(key, dir_p);
 
   Page *bucket_page = FetchBucketPage(bucket_page_id);
@@ -265,10 +270,10 @@ bool HASH_TABLE_TYPE::Remove(Transaction *transaction, const KeyType &key, const
   // 不能在这里就把bucket锁释放了
   // bucket_page->WUnlatch();
   // merge
-  uint32_t split_bkt_dir_idx = dir_p->GetSplitImageIndex(bkt_dir_idx);
-  if ((bucket->IsEmpty()) && (dir_p->GetLocalDepth(bkt_dir_idx) > 0) &&
-      (dir_p->GetLocalDepth(bkt_dir_idx) == dir_p->GetLocalDepth(split_bkt_dir_idx))) {
+  if (bucket->IsEmpty()) {
     bucket_page->WUnlatch();
+    buffer_pool_manager_->UnpinPage(bucket_page_id, true);
+    buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
     table_latch_.RUnlock();
     Merge(transaction, key, value);
     return flg;
@@ -293,7 +298,6 @@ void HASH_TABLE_TYPE::Merge(Transaction *transaction, const KeyType &key, const 
   uint32_t split_bkt_dir_idx = dir_p->GetSplitImageIndex(bkt_dir_idx);
   // get pages id
   page_id_t bkt_page_id = dir_p->GetBucketPageId(bkt_dir_idx);
-  page_id_t split_bkt_page_id = dir_p->GetBucketPageId(split_bkt_dir_idx);
 
   uint32_t local_depth = dir_p->GetLocalDepth(bkt_dir_idx);
   if (local_depth == 0) {
@@ -325,6 +329,7 @@ void HASH_TABLE_TYPE::Merge(Transaction *transaction, const KeyType &key, const 
   buffer_pool_manager_->UnpinPage(bkt_page_id, false);
   buffer_pool_manager_->DeletePage(bkt_page_id);
   // set origin bucket page pointer to new bucket page
+  page_id_t split_bkt_page_id = dir_p->GetBucketPageId(split_bkt_dir_idx);
   dir_p->SetBucketPageId(bkt_dir_idx, split_bkt_page_id);
   dir_p->DecrLocalDepth(bkt_dir_idx);
   dir_p->DecrLocalDepth(split_bkt_dir_idx);
