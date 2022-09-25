@@ -28,12 +28,12 @@ HASH_TABLE_TYPE::ExtendibleHashTable(const std::string &name, BufferPoolManager 
     : buffer_pool_manager_(buffer_pool_manager), comparator_(comparator), hash_fn_(std::move(hash_fn)) {
   //  implement me!
   directory_page_id_ = INVALID_PAGE_ID;
-  std::ifstream file("/autograder/bustub/test/container/grading_hash_table_test.cpp");
-  std::string str;
-  while (file.good()) {
-    std::getline(file, str);
-    std::cout << str << std::endl;
-  }
+  // std::ifstream file("/autograder/bustub/test/container/grading_hash_table_test.cpp");
+  // std::string str;
+  // while (file.good()) {
+  //   std::getline(file, str);
+  //   std::cout << str << std::endl;
+  // }
 }
 
 /*****************************************************************************
@@ -141,7 +141,6 @@ bool HASH_TABLE_TYPE::Insert(Transaction *transaction, const KeyType &key, const
   Page *bucket_page = FetchBucketPage(bucket_page_id);
   bucket_page->WLatch();
   HASH_TABLE_BUCKET_TYPE *bucket = GetBucketData(bucket_page);
-  assert(bucket != nullptr);
   // if not full, insert directly!
   if (!bucket->IsFull()) {
     bool flag = bucket->Insert(key, value, comparator_);
@@ -198,7 +197,6 @@ bool HASH_TABLE_TYPE::SplitInsert(Transaction *transaction, const KeyType &key, 
   bucket_page2->WLatch();
   assert(bucket_page2 != nullptr);
   HASH_TABLE_BUCKET_TYPE *new_bkt_p = reinterpret_cast<HASH_TABLE_BUCKET_TYPE *>(bucket_page2->GetData());
-
   uint32_t image_bkt_dir_idx = dir_p->GetSplitImageIndex(old_bkt_dir_idx);
   dir_p->SetLocalDepth(image_bkt_dir_idx, dir_p->GetLocalDepth(old_bkt_dir_idx));
   dir_p->SetBucketPageId(image_bkt_dir_idx, image_bkt_page_id);
@@ -329,13 +327,16 @@ void HASH_TABLE_TYPE::Merge(Transaction *transaction, const KeyType &key, const 
   buffer_pool_manager_->UnpinPage(bkt_page_id, false);
   buffer_pool_manager_->DeletePage(bkt_page_id);
   // set origin bucket page pointer to new bucket page
-  page_id_t split_bkt_page_id = dir_p->GetBucketPageId(split_bkt_dir_idx);
+  page_id_t split_bkt_page_id = dir_p->GetBucketPageId(
+      split_bkt_dir_idx);  // why will segment fault if put it to /301 line? when
+                           // localdepth == 0,consider this situation, split_bkt_dir_idx会变得非常大，然后访问数组越界
   dir_p->SetBucketPageId(bkt_dir_idx, split_bkt_page_id);
   dir_p->DecrLocalDepth(bkt_dir_idx);
   dir_p->DecrLocalDepth(split_bkt_dir_idx);
 
   for (uint32_t i = 0; i < dir_p->Size(); i++) {
-    if (dir_p->GetBucketPageId(i) == bkt_page_id) {
+    if (dir_p->GetBucketPageId(i) == bkt_page_id ||
+        dir_p->GetBucketPageId(i) == split_bkt_page_id) {  // 假如和split_bkt_page_id相同，则只需要修改它的localdepth
       dir_p->SetBucketPageId(i, split_bkt_page_id);
       dir_p->SetLocalDepth(i, dir_p->GetLocalDepth(bkt_dir_idx));
     }
