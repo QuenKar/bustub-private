@@ -262,20 +262,21 @@ bool HASH_TABLE_TYPE::Remove(Transaction *transaction, const KeyType &key, const
 
   // remove element and unpin pages
   bool flg = bucket->Remove(key, value, comparator_);
-
-  bucket_page->WUnlatch();
-
-  buffer_pool_manager_->UnpinPage(bucket_page_id, true);
-  buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
-
+  // 不能在这里就把bucket锁释放了
+  // bucket_page->WUnlatch();
   // merge
   uint32_t split_bkt_dir_idx = dir_p->GetSplitImageIndex(bkt_dir_idx);
   if ((bucket->IsEmpty()) && (dir_p->GetLocalDepth(bkt_dir_idx) > 0) &&
       (dir_p->GetLocalDepth(bkt_dir_idx) == dir_p->GetLocalDepth(split_bkt_dir_idx))) {
+    bucket_page->WUnlatch();
     table_latch_.RUnlock();
     Merge(transaction, key, value);
+    return flg;
   }
 
+  bucket_page->WUnlatch();
+  buffer_pool_manager_->UnpinPage(bucket_page_id, true);
+  buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
   table_latch_.RUnlock();  // deadlock！！！notes that.
   return flg;
 }
@@ -293,6 +294,33 @@ void HASH_TABLE_TYPE::Merge(Transaction *transaction, const KeyType &key, const 
   // get pages id
   page_id_t bkt_page_id = dir_p->GetBucketPageId(bkt_dir_idx);
   page_id_t split_bkt_page_id = dir_p->GetBucketPageId(split_bkt_dir_idx);
+
+  uint32_t local_depth = dir_p->GetLocalDepth(bkt_dir_idx);
+  if (local_depth == 0) {
+    assert(buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false));
+    table_latch_.WUnlock();
+    return;
+  }
+
+  if (local_depth != dir_p->GetLocalDepth(split_bkt_dir_idx)) {
+    assert(buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false));
+    table_latch_.WUnlock();
+    return;
+  }
+
+  Page *target_bucket_page = FetchBucketPage(bkt_page_id);
+  target_bucket_page->RLatch();
+  HASH_TABLE_BUCKET_TYPE *target_bucket = GetBucketData(target_bucket_page);
+  if (!target_bucket->IsEmpty()) {
+    target_bucket_page->RUnlatch();
+    buffer_pool_manager_->UnpinPage(bkt_page_id, false);
+    buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
+    table_latch_.WUnlock();
+    return;
+  }
+
+  target_bucket_page->RUnlatch();
+
   // remove origin bucket
   buffer_pool_manager_->UnpinPage(bkt_page_id, false);
   buffer_pool_manager_->DeletePage(bkt_page_id);
