@@ -134,9 +134,7 @@ class ExtendibleHashTable {
    * @param bucket_page_id the page_id to fetch
    * @return a pointer to a bucket page
    */
-  Page *FetchBucketPage(page_id_t bucket_page_id);
-
-  HASH_TABLE_BUCKET_TYPE *GetBucketData(Page *page);
+  HASH_TABLE_BUCKET_TYPE *FetchBucketPage(page_id_t bucket_page_id);
 
   /**
    * Performs insertion with an optional bucket splitting.  If the
@@ -167,10 +165,7 @@ class ExtendibleHashTable {
    */
   void Merge(Transaction *transaction, const KeyType &key, const ValueType &value);
 
-  // directory lock
-  std::mutex dir_lock_;
-
-  //  member variables
+  // member variables
   page_id_t directory_page_id_;
   BufferPoolManager *buffer_pool_manager_;
   KeyComparator comparator_;

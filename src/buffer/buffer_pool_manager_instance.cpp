@@ -150,11 +150,13 @@ Page *BufferPoolManagerInstance::FetchPgImp(page_id_t page_id) {
   // not found
   frame_id_t f_id = -1;
   Page *p = nullptr;
+  // find from free_list
   if (!free_list_.empty()) {
     f_id = free_list_.front();
     free_list_.pop_front();
     p = &pages_[f_id];
   } else {
+    // find from lru replacer
     if (replacer_->Victim(&f_id)) {
       p = &pages_[f_id];
       if (p->IsDirty()) {
@@ -189,7 +191,7 @@ bool BufferPoolManagerInstance::DeletePgImp(page_id_t page_id) {
   // 3.   Otherwise, P can be deleted. Remove P from the page table, reset its metadata and return it to the free list.
 
   std::lock_guard<std::mutex> guard(latch_);
-
+  DeallocatePage(page_id);
   auto iter = page_table_.find(page_id);
   if (iter == page_table_.end()) {
     return true;
@@ -197,15 +199,20 @@ bool BufferPoolManagerInstance::DeletePgImp(page_id_t page_id) {
   frame_id_t f_id = iter->second;
 
   Page *p = &pages_[f_id];
-  if (p->pin_count_ != 0) {
+  if (p->pin_count_ > 0) {
     return false;
   }
+
+  if (p->IsDirty()) {
+    disk_manager_->WritePage(p->GetPageId(), p->GetData());
+  }
+  replacer_->Pin(f_id);
   page_table_.erase(iter);
-  DeallocatePage(page_id);
 
   p->page_id_ = INVALID_PAGE_ID;
-  p->ResetMemory();
   p->is_dirty_ = false;
+  p->pin_count_ = 0;
+  p->ResetMemory();
 
   free_list_.push_back(f_id);
 

@@ -19,21 +19,21 @@
 #include "common/logger.h"
 #include "common/rid.h"
 #include "container/hash/extendible_hash_table.h"
-
 namespace bustub {
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 HASH_TABLE_TYPE::ExtendibleHashTable(const std::string &name, BufferPoolManager *buffer_pool_manager,
                                      const KeyComparator &comparator, HashFunction<KeyType> hash_fn)
     : buffer_pool_manager_(buffer_pool_manager), comparator_(comparator), hash_fn_(std::move(hash_fn)) {
-  //  implement me!
-  directory_page_id_ = INVALID_PAGE_ID;
-  // std::ifstream file("/autograder/bustub/test/container/grading_hash_table_test.cpp");
-  // std::string str;
-  // while (file.good()) {
-  //   std::getline(file, str);
-  //   std::cout << str << std::endl;
-  // }
+  // LOG_DEBUG("BUCKET_ARRAY_SIZE = %ld", BUCKET_ARRAY_SIZE);
+  HashTableDirectoryPage *dir_page =
+      reinterpret_cast<HashTableDirectoryPage *>(buffer_pool_manager_->NewPage(&directory_page_id_));
+  dir_page->SetPageId(directory_page_id_);
+  page_id_t new_bucket_id;
+  buffer_pool_manager_->NewPage(&new_bucket_id);
+  dir_page->SetBucketPageId(0, new_bucket_id);
+  assert(buffer_pool_manager_->UnpinPage(directory_page_id_, true, nullptr));
+  assert(buffer_pool_manager_->UnpinPage(new_bucket_id, true, nullptr));
 }
 
 /*****************************************************************************
@@ -53,54 +53,25 @@ uint32_t HASH_TABLE_TYPE::Hash(KeyType key) {
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 uint32_t HASH_TABLE_TYPE::KeyToDirectoryIndex(KeyType key, HashTableDirectoryPage *dir_page) {
-  uint32_t directory_idx = Hash(key) & dir_page->GetGlobalDepthMask();
-  return directory_idx;
+  uint32_t hashed_key = Hash(key);
+  uint32_t mask = dir_page->GetGlobalDepthMask();
+  return mask & hashed_key;
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 page_id_t HASH_TABLE_TYPE::KeyToPageId(KeyType key, HashTableDirectoryPage *dir_page) {
-  return dir_page->GetBucketPageId(KeyToDirectoryIndex(key, dir_page));
+  uint32_t idx = KeyToDirectoryIndex(key, dir_page);
+  return dir_page->GetBucketPageId(idx);
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 HashTableDirectoryPage *HASH_TABLE_TYPE::FetchDirectoryPage() {
-  HashTableDirectoryPage *ret = nullptr;
-  dir_lock_.lock();
-  if (directory_page_id_ == INVALID_PAGE_ID) {
-    // new a directory page
-    page_id_t new_dir_page_id;
-    Page *p = buffer_pool_manager_->NewPage(&new_dir_page_id);
-    // assert(p != nullptr);
-    directory_page_id_ = new_dir_page_id;
-    ret = reinterpret_cast<HashTableDirectoryPage *>(p->GetData());
-    ret->SetPageId(directory_page_id_);
-    // new first bucket
-    page_id_t new_bkt_page_id;
-    p = buffer_pool_manager_->NewPage(&new_bkt_page_id);
-    assert(p != nullptr);
-    ret->SetBucketPageId(0, new_bkt_page_id);
-    // unpin the two pages because write data
-    buffer_pool_manager_->UnpinPage(new_dir_page_id, true);
-    buffer_pool_manager_->UnpinPage(new_bkt_page_id, true);
-  }
-  dir_lock_.unlock();
-  // get page from buffer
-  assert(directory_page_id_ != INVALID_PAGE_ID);
-  Page *p = buffer_pool_manager_->FetchPage(directory_page_id_);
-  assert(p != nullptr);
-  ret = reinterpret_cast<HashTableDirectoryPage *>(p->GetData());
-
-  return ret;
+  return reinterpret_cast<HashTableDirectoryPage *>(buffer_pool_manager_->FetchPage(directory_page_id_));
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
-Page *HASH_TABLE_TYPE::FetchBucketPage(page_id_t bucket_page_id) {
-  return buffer_pool_manager_->FetchPage(bucket_page_id);
-}
-
-template <typename KeyType, typename ValueType, typename KeyComparator>
-HASH_TABLE_BUCKET_TYPE *HASH_TABLE_TYPE::GetBucketData(Page *page) {
-  return reinterpret_cast<HASH_TABLE_BUCKET_TYPE *>(page->GetData());
+HASH_TABLE_BUCKET_TYPE *HASH_TABLE_TYPE::FetchBucketPage(page_id_t bucket_page_id) {
+  return reinterpret_cast<HASH_TABLE_BUCKET_TYPE *>(buffer_pool_manager_->FetchPage(bucket_page_id));
 }
 
 /*****************************************************************************
@@ -108,24 +79,19 @@ HASH_TABLE_BUCKET_TYPE *HASH_TABLE_TYPE::GetBucketData(Page *page) {
  *****************************************************************************/
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_TYPE::GetValue(Transaction *transaction, const KeyType &key, std::vector<ValueType> *result) {
-  // if (directory_page_id_ == INVALID_PAGE_ID) return false;
+  HashTableDirectoryPage *dir_page = FetchDirectoryPage();
   table_latch_.RLock();
-  // Get the bucket corresponding to a key.
-  HashTableDirectoryPage *dir_p = FetchDirectoryPage();
-  page_id_t bucket_page_id = KeyToPageId(key, dir_p);
-  Page *bucket_page = FetchBucketPage(bucket_page_id);
-  bucket_page->RLatch();
-  HASH_TABLE_BUCKET_TYPE *bucket = GetBucketData(bucket_page);
-  // bucket->PrintBucket();
-  bool flag = bucket->GetValue(key, comparator_, result);
-  bucket_page->RUnlatch();
-  // unpin page false because no write
-  buffer_pool_manager_->UnpinPage(bucket_page_id, false);
-  buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
-
+  page_id_t bucket_page_id = KeyToPageId(key, dir_page);
+  HASH_TABLE_BUCKET_TYPE *bucket = FetchBucketPage(bucket_page_id);
+  Page *p = reinterpret_cast<Page *>(bucket);
+  p->RLatch();
+  bool ret = bucket->GetValue(key, comparator_, result);
+  p->RUnlatch();
   table_latch_.RUnlock();
+  assert(buffer_pool_manager_->UnpinPage(directory_page_id_, false, nullptr));
+  assert(buffer_pool_manager_->UnpinPage(bucket_page_id, false, nullptr));
 
-  return flag;
+  return ret;
 }
 
 /*****************************************************************************
@@ -133,119 +99,103 @@ bool HASH_TABLE_TYPE::GetValue(Transaction *transaction, const KeyType &key, std
  *****************************************************************************/
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_TYPE::Insert(Transaction *transaction, const KeyType &key, const ValueType &value) {
-  // insert
+  HashTableDirectoryPage *dir_page = FetchDirectoryPage();
   table_latch_.RLock();
-
-  HashTableDirectoryPage *dir_p = FetchDirectoryPage();
-  page_id_t bucket_page_id = KeyToPageId(key, dir_p);
-  Page *bucket_page = FetchBucketPage(bucket_page_id);
-  bucket_page->WLatch();
-  HASH_TABLE_BUCKET_TYPE *bucket = GetBucketData(bucket_page);
-  // if not full, insert directly!
-  if (!bucket->IsFull()) {
-    bool flag = bucket->Insert(key, value, comparator_);
-    bucket_page->WUnlatch();
-    buffer_pool_manager_->UnpinPage(bucket_page_id, true);
-    buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);  // why false? director page is no change.
+  page_id_t bucket_page_id = KeyToPageId(key, dir_page);
+  HASH_TABLE_BUCKET_TYPE *bucket = FetchBucketPage(bucket_page_id);
+  Page *p = reinterpret_cast<Page *>(bucket);
+  p->WLatch();
+  if (bucket->IsFull()) {
+    p->WUnlatch();
     table_latch_.RUnlock();
-    return flag;
+    assert(buffer_pool_manager_->UnpinPage(directory_page_id_, true, nullptr));
+    assert(buffer_pool_manager_->UnpinPage(bucket_page_id, true, nullptr));
+    return SplitInsert(transaction, key, value);
   }
-
-  bucket_page->WUnlatch();
-  buffer_pool_manager_->UnpinPage(bucket_page_id, false);
-  buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
-
+  bool ret = bucket->Insert(key, value, comparator_);
+  p->WUnlatch();
   table_latch_.RUnlock();
-
-  return SplitInsert(transaction, key, value);
+  // std::cout<<"find the unfull bucket"<<std::endl;
+  assert(buffer_pool_manager_->UnpinPage(directory_page_id_, true, nullptr));
+  assert(buffer_pool_manager_->UnpinPage(bucket_page_id, true, nullptr));
+  return ret;
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_TYPE::SplitInsert(Transaction *transaction, const KeyType &key, const ValueType &value) {
+  HashTableDirectoryPage *dir_page = FetchDirectoryPage();
   table_latch_.WLock();
-  HashTableDirectoryPage *dir_p = FetchDirectoryPage();
-  uint32_t old_bkt_dir_idx = KeyToDirectoryIndex(key, dir_p);
-  uint32_t old_bkt_depth = dir_p->GetLocalDepth(old_bkt_dir_idx);
-
-  // a max limit for bucket count
-  // bucket max count is to 512.
-  // #define DIRECTORY_ARRAY_SIZE 512
-  if (old_bkt_depth >= MAX_BUCKET_DEPTH) {
-    assert(buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false));
-    table_latch_.WUnlock();
-    return false;
-  }
-  // incr global depth
-  if (old_bkt_depth == dir_p->GetGlobalDepth()) {
-    dir_p->IncrGlobalDepth();
-  }
-
-  dir_p->IncrLocalDepth(old_bkt_dir_idx);
-  // keep the data ,then reset the old bucket
-  page_id_t old_bkt_page_id = dir_p->GetBucketPageId(old_bkt_dir_idx);
-  Page *bucket_page1 = FetchBucketPage(old_bkt_page_id);
-  bucket_page1->WLatch();
-  HASH_TABLE_BUCKET_TYPE *old_bkt_p = GetBucketData(bucket_page1);
-  uint32_t old_array_size = old_bkt_p->NumReadable();
-  MappingType *data = old_bkt_p->GetArrayCopy();
-  // reset the bucket
-  old_bkt_p->Reset();
-
-  // create and init new image bucket
-  page_id_t image_bkt_page_id;
-  Page *bucket_page2 = buffer_pool_manager_->NewPage(&image_bkt_page_id);
-  bucket_page2->WLatch();
-  assert(bucket_page2 != nullptr);
-  HASH_TABLE_BUCKET_TYPE *new_bkt_p = reinterpret_cast<HASH_TABLE_BUCKET_TYPE *>(bucket_page2->GetData());
-  uint32_t image_bkt_dir_idx = dir_p->GetSplitImageIndex(old_bkt_dir_idx);
-  dir_p->SetLocalDepth(image_bkt_dir_idx, dir_p->GetLocalDepth(old_bkt_dir_idx));
-  dir_p->SetBucketPageId(image_bkt_dir_idx, image_bkt_page_id);
-
-  // insert the data into the two bucket
-  for (size_t i = 0; i < old_array_size; i++) {
-    MappingType &tmp = data[i];
-    uint32_t target_bkt_dir_idx = Hash(tmp.first) & (dir_p->GetLocalDepthMask(old_bkt_dir_idx));
-    page_id_t target_bkt_page_id = dir_p->GetBucketPageId(target_bkt_dir_idx);
-
-    if (target_bkt_page_id == old_bkt_page_id) {
-      old_bkt_p->Insert(tmp.first, tmp.second, comparator_);
+  while (true) {
+    page_id_t bucket_page_id = KeyToPageId(key, dir_page);
+    uint32_t bucket_idx = KeyToDirectoryIndex(key, dir_page);
+    HASH_TABLE_BUCKET_TYPE *bucket = FetchBucketPage(bucket_page_id);
+    if (bucket->IsFull()) {
+      uint32_t global_depth = dir_page->GetGlobalDepth();
+      uint32_t local_depth = dir_page->GetLocalDepth(bucket_idx);
+      page_id_t new_bucket_id = 0;
+      HASH_TABLE_BUCKET_TYPE *new_bucket =
+          reinterpret_cast<HASH_TABLE_BUCKET_TYPE *>(buffer_pool_manager_->NewPage(&new_bucket_id));
+      assert(new_bucket != nullptr);
+      if (global_depth == local_depth) {
+        // if i == ij, extand the bucket dir, and split the bucket
+        uint32_t bucket_num = 1 << global_depth;
+        for (uint32_t i = 0; i < bucket_num; i++) {
+          dir_page->SetBucketPageId(i + bucket_num, dir_page->GetBucketPageId(i));
+          dir_page->SetLocalDepth(i + bucket_num, dir_page->GetLocalDepth(i));
+        }
+        dir_page->IncrGlobalDepth();
+        dir_page->SetBucketPageId(bucket_idx + bucket_num, new_bucket_id);
+        dir_page->IncrLocalDepth(bucket_idx);
+        dir_page->IncrLocalDepth(bucket_idx + bucket_num);
+        global_depth++;
+      } else {
+        // if i > ij, split the bucket
+        // more than one records point to the bucket
+        // the records' low ij bits are same
+        // and the high (i - ij) bits are index of the records point to the same bucket
+        uint32_t mask = (1 << local_depth) - 1;
+        uint32_t base_idx = mask & bucket_idx;
+        uint32_t records_num = 1 << (global_depth - local_depth - 1);
+        uint32_t step = (1 << local_depth);
+        uint32_t idx = base_idx;
+        for (uint32_t i = 0; i < records_num; i++) {
+          dir_page->IncrLocalDepth(idx);
+          idx += step * 2;
+        }
+        idx = base_idx + step;
+        for (uint32_t i = 0; i < records_num; i++) {
+          dir_page->SetBucketPageId(idx, new_bucket_id);
+          dir_page->IncrLocalDepth(idx);
+          idx += step * 2;
+        }
+      }
+      // dir_page->PrintDirectory();
+      // rehash all records in bucket j
+      for (uint32_t i = 0; i < BUCKET_ARRAY_SIZE; i++) {
+        KeyType j_key = bucket->KeyAt(i);
+        ValueType j_value = bucket->ValueAt(i);
+        bucket->RemoveAt(i);
+        if (KeyToPageId(j_key, dir_page) == bucket_page_id) {
+          bucket->Insert(j_key, j_value, comparator_);
+        } else {
+          new_bucket->Insert(j_key, j_value, comparator_);
+        }
+      }
+      // std::cout<<"original bucket size = "<<bucket->NumReadable()<<std::endl;
+      // std::cout<<"new bucket size = "<<new_bucket->NumReadable()<<std::endl;
+      assert(buffer_pool_manager_->UnpinPage(bucket_page_id, true, nullptr));
+      assert(buffer_pool_manager_->UnpinPage(new_bucket_id, true, nullptr));
     } else {
-      new_bkt_p->Insert(tmp.first, tmp.second, comparator_);
+      bool ret = bucket->Insert(key, value, comparator_);
+      table_latch_.WUnlock();
+      // std::cout<<"find the unfull bucket"<<std::endl;
+      assert(buffer_pool_manager_->UnpinPage(directory_page_id_, true, nullptr));
+      assert(buffer_pool_manager_->UnpinPage(bucket_page_id, true, nullptr));
+      return ret;
     }
   }
-  // delete the copy data
-  delete[] data;
 
-  // set the same local depth and page
-  uint32_t localdepth = dir_p->GetLocalDepth(old_bkt_dir_idx);
-  uint32_t diff = 1 << localdepth;
-  for (uint32_t i = old_bkt_dir_idx; i >= diff; i -= diff) {
-    dir_p->SetBucketPageId(i, old_bkt_page_id);
-    dir_p->SetLocalDepth(i, localdepth);
-  }
-  for (uint32_t i = old_bkt_dir_idx; i < dir_p->Size(); i += diff) {
-    dir_p->SetBucketPageId(i, old_bkt_page_id);
-    dir_p->SetLocalDepth(i, localdepth);
-  }
-  for (uint32_t i = image_bkt_dir_idx; i >= diff; i -= diff) {
-    dir_p->SetBucketPageId(i, image_bkt_page_id);
-    dir_p->SetLocalDepth(i, localdepth);
-  }
-  for (uint32_t i = image_bkt_dir_idx; i < dir_p->Size(); i += diff) {
-    dir_p->SetBucketPageId(i, image_bkt_page_id);
-    dir_p->SetLocalDepth(i, localdepth);
-  }
-
-  bucket_page1->WUnlatch();
-  bucket_page2->WUnlatch();
-
-  buffer_pool_manager_->UnpinPage(old_bkt_page_id, true);
-  buffer_pool_manager_->UnpinPage(image_bkt_page_id, true);
-  buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), true);
-
-  table_latch_.WUnlock();
-
-  return Insert(transaction, key, value);
+  return false;
 }
 
 /*****************************************************************************
@@ -253,35 +203,24 @@ bool HASH_TABLE_TYPE::SplitInsert(Transaction *transaction, const KeyType &key, 
  *****************************************************************************/
 template <typename KeyType, typename ValueType, typename KeyComparator>
 bool HASH_TABLE_TYPE::Remove(Transaction *transaction, const KeyType &key, const ValueType &value) {
-  // Get the bucket corresponding to a key.
+  HashTableDirectoryPage *dir_page = FetchDirectoryPage();
   table_latch_.RLock();
-  HashTableDirectoryPage *dir_p = FetchDirectoryPage();
-  page_id_t bucket_page_id = KeyToPageId(key, dir_p);
-
-  Page *bucket_page = FetchBucketPage(bucket_page_id);
-  bucket_page->WLatch();
-  HASH_TABLE_BUCKET_TYPE *bucket = GetBucketData(bucket_page);
-  assert(bucket != nullptr);
-
-  // remove element and unpin pages
-  bool flg = bucket->Remove(key, value, comparator_);
-  // 不能在这里就把bucket锁释放了
-  // bucket_page->WUnlatch();
-  // merge
-  if (bucket->IsEmpty()) {
-    bucket_page->WUnlatch();
-    buffer_pool_manager_->UnpinPage(bucket_page_id, true);
-    buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
+  page_id_t bucket_page_id = KeyToPageId(key, dir_page);
+  uint32_t bucket_idx = KeyToDirectoryIndex(key, dir_page);
+  HASH_TABLE_BUCKET_TYPE *bucket = FetchBucketPage(bucket_page_id);
+  Page *p = reinterpret_cast<Page *>(bucket);
+  p->WLatch();
+  bool ret = bucket->Remove(key, value, comparator_);
+  p->WUnlatch();
+  if (bucket->IsEmpty() && dir_page->GetLocalDepth(bucket_idx) != 0) {
     table_latch_.RUnlock();
-    Merge(transaction, key, value);
-    return flg;
+    this->Merge(transaction, key, value);
+  } else {
+    table_latch_.RUnlock();
   }
-
-  bucket_page->WUnlatch();
-  buffer_pool_manager_->UnpinPage(bucket_page_id, true);
-  buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
-  table_latch_.RUnlock();  // deadlock！！！notes that.
-  return flg;
+  assert(buffer_pool_manager_->UnpinPage(bucket_page_id, true, nullptr));
+  assert(buffer_pool_manager_->UnpinPage(directory_page_id_, true, nullptr));
+  return ret;
 }
 
 /*****************************************************************************
@@ -289,66 +228,43 @@ bool HASH_TABLE_TYPE::Remove(Transaction *transaction, const KeyType &key, const
  *****************************************************************************/
 template <typename KeyType, typename ValueType, typename KeyComparator>
 void HASH_TABLE_TYPE::Merge(Transaction *transaction, const KeyType &key, const ValueType &value) {
-  // Get the bucket corresponding to a key.
+  HashTableDirectoryPage *dir_page = FetchDirectoryPage();
   table_latch_.WLock();
-  HashTableDirectoryPage *dir_p = FetchDirectoryPage();
-  uint32_t bkt_dir_idx = KeyToDirectoryIndex(key, dir_p);
-  uint32_t split_bkt_dir_idx = dir_p->GetSplitImageIndex(bkt_dir_idx);
-  // get pages id
-  page_id_t bkt_page_id = dir_p->GetBucketPageId(bkt_dir_idx);
+  uint32_t bucket_idx = KeyToDirectoryIndex(key, dir_page);
+  page_id_t bucket_page_id = dir_page->GetBucketPageId(bucket_idx);
+  HASH_TABLE_BUCKET_TYPE *bucket = FetchBucketPage(bucket_page_id);
+  if (bucket->IsEmpty() && dir_page->GetLocalDepth(bucket_idx) != 0) {
+    uint32_t local_depth = dir_page->GetLocalDepth(bucket_idx);
+    uint32_t global_depth = dir_page->GetGlobalDepth();
+    // How to find the bucket to Merge?
+    // Answer: After Merge, the records, which pointed to the Merged Bucket,
+    // have low (local_depth - 1) bits same
+    // therefore, reverse the low local_depth can get the idx point to the bucket to Merge
+    uint32_t merged_bucket_idx = bucket_idx ^ (1 << (local_depth - 1));
+    page_id_t merged_page_id = dir_page->GetBucketPageId(merged_bucket_idx);
+    HASH_TABLE_BUCKET_TYPE *merged_bucket = FetchBucketPage(merged_page_id);
+    if (dir_page->GetLocalDepth(merged_bucket_idx) == local_depth && merged_bucket->IsEmpty()) {
+      local_depth--;
+      uint32_t mask = (1 << local_depth) - 1;
+      uint32_t idx = mask & bucket_idx;
+      uint32_t records_num = 1 << (global_depth - local_depth);
+      uint32_t step = (1 << local_depth);
 
-  uint32_t local_depth = dir_p->GetLocalDepth(bkt_dir_idx);
-  if (local_depth == 0) {
-    assert(buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false));
-    table_latch_.WUnlock();
-    return;
-  }
-
-  if (local_depth != dir_p->GetLocalDepth(split_bkt_dir_idx)) {
-    assert(buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false));
-    table_latch_.WUnlock();
-    return;
-  }
-
-  Page *target_bucket_page = FetchBucketPage(bkt_page_id);
-  target_bucket_page->RLatch();
-  HASH_TABLE_BUCKET_TYPE *target_bucket = GetBucketData(target_bucket_page);
-  if (!target_bucket->IsEmpty()) {
-    target_bucket_page->RUnlatch();
-    buffer_pool_manager_->UnpinPage(bkt_page_id, false);
-    buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), false);
-    table_latch_.WUnlock();
-    return;
-  }
-
-  target_bucket_page->RUnlatch();
-
-  // remove origin bucket
-  buffer_pool_manager_->UnpinPage(bkt_page_id, false);
-  buffer_pool_manager_->DeletePage(bkt_page_id);
-  // set origin bucket page pointer to new bucket page
-  page_id_t split_bkt_page_id = dir_p->GetBucketPageId(
-      split_bkt_dir_idx);  // why will segment fault if put it to /301 line? when
-                           // localdepth == 0,consider this situation, split_bkt_dir_idx会变得非常大，然后访问数组越界
-  dir_p->SetBucketPageId(bkt_dir_idx, split_bkt_page_id);
-  dir_p->DecrLocalDepth(bkt_dir_idx);
-  dir_p->DecrLocalDepth(split_bkt_dir_idx);
-
-  for (uint32_t i = 0; i < dir_p->Size(); i++) {
-    if (dir_p->GetBucketPageId(i) == bkt_page_id ||
-        dir_p->GetBucketPageId(i) == split_bkt_page_id) {  // 假如和split_bkt_page_id相同，则只需要修改它的localdepth
-      dir_p->SetBucketPageId(i, split_bkt_page_id);
-      dir_p->SetLocalDepth(i, dir_p->GetLocalDepth(bkt_dir_idx));
+      for (uint32_t i = 0; i < records_num; i++) {
+        dir_page->SetBucketPageId(idx, bucket_page_id);
+        dir_page->DecrLocalDepth(idx);
+        idx += step;
+      }
+      buffer_pool_manager_->DeletePage(merged_page_id);
     }
+    if (dir_page->CanShrink()) {
+      dir_page->DecrGlobalDepth();
+    }
+    assert(buffer_pool_manager_->UnpinPage(merged_page_id, true, nullptr));
   }
-
-  while (dir_p->CanShrink()) {
-    dir_p->DecrGlobalDepth();
-  }
-  // unpin directory page
-  buffer_pool_manager_->UnpinPage(dir_p->GetPageId(), true);
-
   table_latch_.WUnlock();
+  assert(buffer_pool_manager_->UnpinPage(directory_page_id_, true, nullptr));
+  assert(buffer_pool_manager_->UnpinPage(bucket_page_id, true, nullptr));
 }
 
 /*****************************************************************************
