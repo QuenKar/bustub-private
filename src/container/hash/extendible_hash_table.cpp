@@ -25,7 +25,6 @@ template <typename KeyType, typename ValueType, typename KeyComparator>
 HASH_TABLE_TYPE::ExtendibleHashTable(const std::string &name, BufferPoolManager *buffer_pool_manager,
                                      const KeyComparator &comparator, HashFunction<KeyType> hash_fn)
     : buffer_pool_manager_(buffer_pool_manager), comparator_(comparator), hash_fn_(std::move(hash_fn)) {
-  // LOG_DEBUG("BUCKET_ARRAY_SIZE = %ld", BUCKET_ARRAY_SIZE);
   HashTableDirectoryPage *dir_page =
       reinterpret_cast<HashTableDirectoryPage *>(buffer_pool_manager_->NewPage(&directory_page_id_));
   dir_page->SetPageId(directory_page_id_);
@@ -53,15 +52,12 @@ uint32_t HASH_TABLE_TYPE::Hash(KeyType key) {
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 uint32_t HASH_TABLE_TYPE::KeyToDirectoryIndex(KeyType key, HashTableDirectoryPage *dir_page) {
-  uint32_t hashed_key = Hash(key);
-  uint32_t mask = dir_page->GetGlobalDepthMask();
-  return mask & hashed_key;
+  return Hash(key) & dir_page->GetGlobalDepthMask();
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
 page_id_t HASH_TABLE_TYPE::KeyToPageId(KeyType key, HashTableDirectoryPage *dir_page) {
-  uint32_t idx = KeyToDirectoryIndex(key, dir_page);
-  return dir_page->GetBucketPageId(idx);
+  return dir_page->GetBucketPageId(KeyToDirectoryIndex(key, dir_page));
 }
 
 template <typename KeyType, typename ValueType, typename KeyComparator>
@@ -115,7 +111,6 @@ bool HASH_TABLE_TYPE::Insert(Transaction *transaction, const KeyType &key, const
   bool ret = bucket->Insert(key, value, comparator_);
   p->WUnlatch();
   table_latch_.RUnlock();
-  // std::cout<<"find the unfull bucket"<<std::endl;
   assert(buffer_pool_manager_->UnpinPage(directory_page_id_, true, nullptr));
   assert(buffer_pool_manager_->UnpinPage(bucket_page_id, true, nullptr));
   return ret;
@@ -181,14 +176,11 @@ bool HASH_TABLE_TYPE::SplitInsert(Transaction *transaction, const KeyType &key, 
           new_bucket->Insert(j_key, j_value, comparator_);
         }
       }
-      // std::cout<<"original bucket size = "<<bucket->NumReadable()<<std::endl;
-      // std::cout<<"new bucket size = "<<new_bucket->NumReadable()<<std::endl;
       assert(buffer_pool_manager_->UnpinPage(bucket_page_id, true, nullptr));
       assert(buffer_pool_manager_->UnpinPage(new_bucket_id, true, nullptr));
     } else {
       bool ret = bucket->Insert(key, value, comparator_);
       table_latch_.WUnlock();
-      // std::cout<<"find the unfull bucket"<<std::endl;
       assert(buffer_pool_manager_->UnpinPage(directory_page_id_, true, nullptr));
       assert(buffer_pool_manager_->UnpinPage(bucket_page_id, true, nullptr));
       return ret;
@@ -236,10 +228,7 @@ void HASH_TABLE_TYPE::Merge(Transaction *transaction, const KeyType &key, const 
   if (bucket->IsEmpty() && dir_page->GetLocalDepth(bucket_idx) != 0) {
     uint32_t local_depth = dir_page->GetLocalDepth(bucket_idx);
     uint32_t global_depth = dir_page->GetGlobalDepth();
-    // How to find the bucket to Merge?
-    // Answer: After Merge, the records, which pointed to the Merged Bucket,
-    // have low (local_depth - 1) bits same
-    // therefore, reverse the low local_depth can get the idx point to the bucket to Merge
+    // get image bucket idx
     uint32_t merged_bucket_idx = bucket_idx ^ (1 << (local_depth - 1));
     page_id_t merged_page_id = dir_page->GetBucketPageId(merged_bucket_idx);
     HASH_TABLE_BUCKET_TYPE *merged_bucket = FetchBucketPage(merged_page_id);
