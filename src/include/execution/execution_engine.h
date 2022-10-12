@@ -66,7 +66,7 @@ class ExecutionEngine {
       }
     } catch (Exception &e) {
       // TODO(student): handle exceptions
-      
+      throw Exception("query error!");
     }
 
     return true;

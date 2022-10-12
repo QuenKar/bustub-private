@@ -62,6 +62,7 @@ class InsertExecutor : public AbstractExecutor {
   Catalog *catalog_;
   TableHeap *tb_hp_;
   TableInfo *tb_info_;
+  std::unique_ptr<AbstractExecutor> child_executor_;
 };
 
 }  // namespace bustub
