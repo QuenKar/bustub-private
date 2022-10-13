@@ -49,7 +49,7 @@ void NestedLoopJoinExecutor::Init() {
       }
     }
   } catch (Exception &e) {
-    throw Exception(ExceptionType::UNKNOWN_TYPE, "InsertError:child execute error.");
+    throw Exception(ExceptionType::UNKNOWN_TYPE, "NestedJoinError:child execute error.");
   }
 }
 
