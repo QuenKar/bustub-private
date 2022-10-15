@@ -34,7 +34,7 @@ bool LimitExecutor::Next(Tuple *tuple, RID *rid) {
     return true;
   }
 
-  return Next(tuple, rid);
+  return false;
 }
 
 }  // namespace bustub

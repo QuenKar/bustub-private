@@ -23,7 +23,6 @@
 #include "storage/table/tuple.h"
 namespace bustub {
 struct HashJoinKey {
-  /** The group-by values */
   Value column_value_;
 
   /**
