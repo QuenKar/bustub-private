@@ -43,7 +43,7 @@ bool SeqScanExecutor::Next(Tuple *tuple, RID *rid) {
   Tuple tmp(res, schema);
 
   const AbstractExpression *expr = plan_->GetPredicate();
-  if (!expr || expr->Evaluate(&tmp, schema).GetAs<bool>()) {
+  if (expr == nullptr || expr->Evaluate(&tmp, schema).GetAs<bool>()) {
     *tuple = tmp;
     *rid = old_oid;
     return true;

@@ -30,18 +30,18 @@ bool InsertExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) {
   // raw insert
   if (plan_->IsRawInsert()) {
     const auto &insert_arr = plan_->RawValues();
-    for (size_t i = 0; i < insert_arr.size(); i++) {
+    for (auto &vec_value : insert_arr) {
       // insert tuple
-      Tuple t{insert_arr[i], &tb_info_->schema_};
+      Tuple t{vec_value, &tb_info_->schema_};
       RID now_rid;
 
       tb_hp_->InsertTuple(t, &now_rid, exec_ctx_->GetTransaction());
       // update index
       auto idxinfo_arr = catalog_->GetTableIndexes(tb_info_->name_);
-      for (size_t j = 0; j < idxinfo_arr.size(); j++) {
-        idxinfo_arr[j]->index_->InsertEntry(
-            t.KeyFromTuple(tb_info_->schema_, idxinfo_arr[j]->key_schema_, idxinfo_arr[j]->index_->GetKeyAttrs()),
-            now_rid, exec_ctx_->GetTransaction());
+      for (auto &idxinfo : idxinfo_arr) {
+        idxinfo->index_->InsertEntry(
+            t.KeyFromTuple(tb_info_->schema_, idxinfo->key_schema_, idxinfo->index_->GetKeyAttrs()), now_rid,
+            exec_ctx_->GetTransaction());
       }
     }
     return false;
@@ -67,10 +67,10 @@ bool InsertExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) {
     tb_hp_->InsertTuple(ct, &now_rid, exec_ctx_->GetTransaction());
     // update index
     auto idxinfo_arr = catalog_->GetTableIndexes(tb_info_->name_);
-    for (size_t j = 0; j < idxinfo_arr.size(); j++) {
-      idxinfo_arr[j]->index_->InsertEntry(
-          ct.KeyFromTuple(tb_info_->schema_, idxinfo_arr[j]->key_schema_, idxinfo_arr[j]->index_->GetKeyAttrs()),
-          now_rid, exec_ctx_->GetTransaction());
+    for (auto &idxinfo : idxinfo_arr) {
+      idxinfo->index_->InsertEntry(
+          ct.KeyFromTuple(tb_info_->schema_, idxinfo->key_schema_, idxinfo->index_->GetKeyAttrs()), now_rid,
+          exec_ctx_->GetTransaction());
     }
   }
 

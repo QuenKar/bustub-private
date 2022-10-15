@@ -33,7 +33,7 @@ bool UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) {
     Tuple old_tuple;
     RID old_rid;
     while (child_executor_->Next(&old_tuple, &old_rid)) {
-      child_tuples.push_back({old_tuple, old_rid});
+      child_tuples.emplace_back(std::pair{old_tuple, old_rid});
     }
   } catch (Exception &e) {
     throw Exception(ExceptionType::UNKNOWN_TYPE, "UpdateError:child execute error.");

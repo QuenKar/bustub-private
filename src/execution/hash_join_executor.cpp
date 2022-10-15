@@ -59,7 +59,7 @@ void HashJoinExecutor::Init() {
       if (hash_join_map_.count(r_hash_key) != 0) {
         for (auto &l_tuple : hash_join_map_.at(r_hash_key)) {
           std::vector<Value> out;
-          for (const auto c : plan_->OutputSchema()->GetColumns()) {
+          for (const auto &c : plan_->OutputSchema()->GetColumns()) {
             out.emplace_back(c.GetExpr()->EvaluateJoin(&l_tuple, l_schema, &r_tuple, r_schema));
           }
 

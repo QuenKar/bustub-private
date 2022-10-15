@@ -36,11 +36,11 @@ void NestedLoopJoinExecutor::Init() {
     while (l_executor_->Next(&l_tuple, &l_rid)) {
       r_executor_->Init();
       while (r_executor_->Next(&r_tuple, &r_rid)) {
-        if (!plan_->Predicate() ||
+        if (plan_->Predicate() == nullptr ||
             plan_->Predicate()->EvaluateJoin(&l_tuple, l_schema, &r_tuple, r_schema).GetAs<bool>()) {
           std::vector<Value> out;
 
-          for (const auto c : plan_->OutputSchema()->GetColumns()) {
+          for (const auto &c : plan_->OutputSchema()->GetColumns()) {
             out.emplace_back(c.GetExpr()->EvaluateJoin(&l_tuple, l_schema, &r_tuple, r_schema));
           }
 

@@ -34,7 +34,7 @@ bool DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) {
     Tuple old_tuple;
     RID old_rid;
     while (child_executor_->Next(&old_tuple, &old_rid)) {
-      child_tuples.push_back({old_tuple, old_rid});
+      child_tuples.emplace_back(std::pair{old_tuple, old_rid});
     }
   } catch (Exception &e) {
     throw Exception(ExceptionType::UNKNOWN_TYPE, "DeleteError:child execute error.");
@@ -47,10 +47,11 @@ bool DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) {
 
     // update index
     auto idxinfo_arr = catalog_->GetTableIndexes(tb_info_->name_);
-    for (size_t j = 0; j < idxinfo_arr.size(); j++) {
-      idxinfo_arr[j]->index_->DeleteEntry(
-          p.first.KeyFromTuple(tb_info_->schema_, idxinfo_arr[j]->key_schema_, idxinfo_arr[j]->index_->GetKeyAttrs()),
-          p.second, exec_ctx_->GetTransaction());
+
+    for (auto &idxinfo : idxinfo_arr) {
+      idxinfo->index_->DeleteEntry(
+          p.first.KeyFromTuple(tb_info_->schema_, idxinfo->key_schema_, idxinfo->index_->GetKeyAttrs()), p.second,
+          exec_ctx_->GetTransaction());
     }
   }
 
