@@ -29,6 +29,9 @@ bool LockManager::LockShared(Transaction *txn, const RID &rid) {
     txn->SetState(TransactionState::ABORTED);
     throw TransactionAbortException(txn->GetTransactionId(), AbortReason::LOCK_ON_SHRINKING);
   }
+  if (txn->IsSharedLocked(rid)) {
+    return true;
+  }
 
   std::unique_lock<std::mutex> l(latch_);
   txn->SetState(TransactionState::GROWING);
@@ -93,7 +96,9 @@ bool LockManager::LockExclusive(Transaction *txn, const RID &rid) {
     txn->SetState(TransactionState::ABORTED);
     throw TransactionAbortException(txn->GetTransactionId(), AbortReason::LOCK_ON_SHRINKING);
   }
-
+  if (txn->IsExclusiveLocked(rid)) {
+    return true;
+  }
   std::unique_lock<std::mutex> l(latch_);
   txn->SetState(TransactionState::GROWING);
   auto &lock_queue = lock_table_[rid];
@@ -148,6 +153,10 @@ bool LockManager::LockExclusive(Transaction *txn, const RID &rid) {
 bool LockManager::LockUpgrade(Transaction *txn, const RID &rid) {
   if (txn->GetState() == TransactionState::ABORTED) {
     return false;
+  }
+  // already have exclusive lock
+  if (txn->IsExclusiveLocked(rid)) {
+    return true;
   }
   std::unique_lock<std::mutex> l(latch_);
   auto &lock_queue = lock_table_[rid];
