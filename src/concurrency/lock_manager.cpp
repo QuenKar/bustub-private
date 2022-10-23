@@ -18,8 +18,6 @@
 namespace bustub {
 
 bool LockManager::LockShared(Transaction *txn, const RID &rid) {
-  std::unique_lock<std::mutex> l(latch_);
-
   if (txn->GetState() == TransactionState::ABORTED) {
     return false;
   }
@@ -31,10 +29,8 @@ bool LockManager::LockShared(Transaction *txn, const RID &rid) {
     txn->SetState(TransactionState::ABORTED);
     throw TransactionAbortException(txn->GetTransactionId(), AbortReason::LOCK_ON_SHRINKING);
   }
-  if (txn->IsSharedLocked(rid)) {
-    return true;
-  }
 
+  std::unique_lock<std::mutex> l(latch_);
   txn->SetState(TransactionState::GROWING);
   auto &lock_queue = lock_table_[rid];
   auto &cond_v = lock_queue.cv_;
@@ -43,20 +39,20 @@ bool LockManager::LockShared(Transaction *txn, const RID &rid) {
   txn->GetSharedLockSet()->emplace(rid);
   txn_table_[txn_id] = txn;
 
-  bool grant = true;
+  bool will_grant = true;
   bool is_kill = false;
   // wound wait
   for (auto &req : lock_queue.request_queue_) {
     if (req.lock_mode_ == LockMode::EXCLUSIVE) {
       if (req.txn_id_ <= txn_id) {
-        grant = false;
+        will_grant = false;
       } else {
         txn_table_[req.txn_id_]->SetState(TransactionState::ABORTED);
         is_kill = true;
       }
     }
     if (req.txn_id_ == txn_id) {
-      req.granted_ = grant;
+      req.granted_ = will_grant;
       break;
     }
   }
@@ -65,20 +61,21 @@ bool LockManager::LockShared(Transaction *txn, const RID &rid) {
     cond_v.notify_all();
   }
   // wait lock
-  while (!grant) {
+  while (!will_grant) {
     for (auto &req : lock_queue.request_queue_) {
       // if there is a T using the write lock, break;
       if (req.lock_mode_ == LockMode::EXCLUSIVE && txn_table_[req.txn_id_]->GetState() != TransactionState::ABORTED) {
         break;
       }
       if (req.txn_id_ == txn_id) {
-        grant = true;
-        req.granted_ = grant;
+        will_grant = true;
+        req.granted_ = will_grant;
       }
     }
-    if (!grant) {
+    if (!will_grant) {
       cond_v.wait(l);
     }
+
     if (txn->GetState() == TransactionState::ABORTED) {
       throw TransactionAbortException(txn_id, AbortReason::DEADLOCK);
     }
@@ -88,7 +85,6 @@ bool LockManager::LockShared(Transaction *txn, const RID &rid) {
 }
 
 bool LockManager::LockExclusive(Transaction *txn, const RID &rid) {
-  std::unique_lock<std::mutex> l(latch_);
   if (txn->GetState() == TransactionState::ABORTED) {
     return false;
   }
@@ -98,33 +94,29 @@ bool LockManager::LockExclusive(Transaction *txn, const RID &rid) {
     throw TransactionAbortException(txn->GetTransactionId(), AbortReason::LOCK_ON_SHRINKING);
   }
 
-  if (txn->IsExclusiveLocked(rid) || txn->IsExclusiveLocked(rid)) {
-    return true;
-  }
-
+  std::unique_lock<std::mutex> l(latch_);
   txn->SetState(TransactionState::GROWING);
   auto &lock_queue = lock_table_[rid];
   auto &cond_v = lock_queue.cv_;
   auto txn_id = txn->GetTransactionId();
   lock_queue.request_queue_.emplace_back(LockRequest{txn_id, LockMode::EXCLUSIVE});
-  txn->GetSharedLockSet()->emplace(rid);
+  txn->GetExclusiveLockSet()->emplace(rid);
   txn_table_[txn_id] = txn;
 
-  bool grant = true;
+  bool will_grant = true;
   bool is_kill = false;
 
   for (auto &req : lock_queue.request_queue_) {
     if (req.txn_id_ == txn_id) {
-      req.granted_ = grant;
+      req.granted_ = will_grant;
       break;
     }
-    if (req.lock_mode_ == LockMode::EXCLUSIVE) {
-      if (req.txn_id_ <= txn_id) {
-        grant = false;
-      } else {
-        txn_table_[req.txn_id_]->SetState(TransactionState::ABORTED);
-        is_kill = true;
-      }
+
+    if (req.txn_id_ <= txn_id) {
+      will_grant = false;
+    } else {
+      txn_table_[req.txn_id_]->SetState(TransactionState::ABORTED);
+      is_kill = true;
     }
   }
 
@@ -132,17 +124,17 @@ bool LockManager::LockExclusive(Transaction *txn, const RID &rid) {
     cond_v.notify_all();
   }
 
-  while (!grant) {
+  while (!will_grant) {
     auto iter = lock_queue.request_queue_.begin();
     while (iter != lock_queue.request_queue_.end() &&
            txn_table_[iter->txn_id_]->GetState() == TransactionState::ABORTED) {
       ++iter;
     }
     if (iter->txn_id_ == txn_id) {
-      grant = true;
-      iter->granted_ = grant;
+      will_grant = true;
+      iter->granted_ = will_grant;
     }
-    if (!grant) {
+    if (!will_grant) {
       cond_v.wait(l);
     }
     if (txn->GetState() == TransactionState::ABORTED) {
@@ -154,32 +146,28 @@ bool LockManager::LockExclusive(Transaction *txn, const RID &rid) {
 }
 
 bool LockManager::LockUpgrade(Transaction *txn, const RID &rid) {
-  std::unique_lock<std::mutex> l(latch_);
   if (txn->GetState() == TransactionState::ABORTED) {
     return false;
   }
-
-  if (txn->IsExclusiveLocked(rid)) {
-    return true;
-  }
+  std::unique_lock<std::mutex> l(latch_);
   auto &lock_queue = lock_table_[rid];
   auto &req_queue = lock_queue.request_queue_;
   auto txn_id = txn->GetTransactionId();
   auto &cond_v = lock_queue.cv_;
-
+  // can't upgrade
   if (lock_queue.upgrading_) {
     txn->SetState(TransactionState::ABORTED);
-    throw TransactionAbortException(txn->GetTransactionId(), AbortReason::UPGRADE_CONFLICT);
+    throw TransactionAbortException(txn_id, AbortReason::UPGRADE_CONFLICT);
   }
 
   lock_queue.upgrading_ = true;
-  bool grant = false;
 
   // upgrade lock level
-  while (!grant) {
+  bool will_grant = false;
+  while (!will_grant) {
     auto iter = req_queue.begin();
     bool is_kill = false;
-    grant = true;
+    will_grant = true;
     auto target = iter;
     while (iter != req_queue.end() && iter->granted_) {
       if (iter->txn_id_ == txn_id) {
@@ -188,15 +176,16 @@ bool LockManager::LockUpgrade(Transaction *txn, const RID &rid) {
         txn_table_[iter->txn_id_]->SetState(TransactionState::ABORTED);
         is_kill = true;
       } else {
-        grant = false;
+        will_grant = false;
       }
+      ++iter;
     }
 
     if (is_kill) {
       cond_v.notify_all();
     }
 
-    if (!grant) {
+    if (!will_grant) {
       cond_v.wait(l);
     } else {
       target->lock_mode_ = LockMode::EXCLUSIVE;
@@ -214,11 +203,11 @@ bool LockManager::LockUpgrade(Transaction *txn, const RID &rid) {
 }
 
 bool LockManager::Unlock(Transaction *txn, const RID &rid) {
-  std::unique_lock<std::mutex> l(latch_);
   if (txn->GetState() == TransactionState::GROWING && txn->GetIsolationLevel() == IsolationLevel::REPEATABLE_READ) {
     txn->SetState(TransactionState::SHRINKING);
   }
 
+  std::unique_lock<std::mutex> l(latch_);
   auto &lock_queue = lock_table_[rid];
   auto &req_queue = lock_queue.request_queue_;
   auto txn_id = txn->GetTransactionId();
