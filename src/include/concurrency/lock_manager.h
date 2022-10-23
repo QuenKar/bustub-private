@@ -23,7 +23,6 @@
 
 #include "common/rid.h"
 #include "concurrency/transaction.h"
-#include "concurrency/transaction_manager.h"
 
 namespace bustub {
 
