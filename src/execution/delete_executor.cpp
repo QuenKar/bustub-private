@@ -73,7 +73,7 @@ bool DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) {
     }
 
     // unlock
-    if (lock_mgr && txn->GetIsolationLevel() == IsolationLevel::READ_COMMITTED) {
+    if (lock_mgr != nullptr && txn->GetIsolationLevel() == IsolationLevel::READ_COMMITTED) {
       lock_mgr->Unlock(txn, old_rid);
     }
   }
