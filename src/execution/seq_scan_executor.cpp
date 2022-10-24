@@ -23,32 +23,42 @@ void SeqScanExecutor::Init() {
 }
 
 bool SeqScanExecutor::Next(Tuple *tuple, RID *rid) {
-  if (iter_ == tb_hp_->End()) {
-    return false;
+  TransactionManager *txn_mgr = exec_ctx_->GetTransactionManager();
+  LockManager *lock_mgr = exec_ctx_->GetLockManager();
+  Transaction *txn = exec_ctx_->GetTransaction();
+  const Schema *out_schema = GetOutputSchema();
+
+  while (iter_ != tb_hp_->End()) {
+    Tuple t_tuple = *iter_;
+    *rid = iter_->GetRid();
+    // add shared lock
+    if (lock_mgr && txn->GetIsolationLevel() != IsolationLevel::READ_UNCOMMITTED) {
+      if (!txn->IsExclusiveLocked(*rid) && !txn->IsSharedLocked(*rid)) {
+        if (!lock_mgr->LockShared(txn, *rid)) {
+          txn_mgr->Abort(txn);
+        }
+      }
+    }
+
+    std::vector<Value> res;
+    for (const auto &col : out_schema->GetColumns()) {
+      res.emplace_back(
+          col.GetExpr()->Evaluate(&(*iter_), &(exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid()))->schema_));
+    }
+
+    *tuple = Tuple(res, out_schema);
+
+    const AbstractExpression *expr = plan_->GetPredicate();
+    if (expr == nullptr || expr->Evaluate(tuple, out_schema).GetAs<bool>()) {
+      ++iter_;
+      if (txn->IsSharedLocked(*rid) && txn->GetIsolationLevel() == IsolationLevel::READ_COMMITTED) {
+        lock_mgr->Unlock(txn, *rid);
+      }
+      return true;
+    }
+    ++iter_;
   }
-
-  RID old_oid = iter_->GetRid();
-  const Schema *schema = plan_->OutputSchema();
-
-  std::vector<Value> res;
-  res.reserve(schema->GetColumnCount());
-
-  for (size_t i = 0; i < res.capacity(); ++i) {
-    res.emplace_back(schema->GetColumn(i).GetExpr()->Evaluate(
-        &(*iter_), &(exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid()))->schema_));
-  }
-
-  ++iter_;
-
-  Tuple tmp(res, schema);
-
-  const AbstractExpression *expr = plan_->GetPredicate();
-  if (expr == nullptr || expr->Evaluate(&tmp, schema).GetAs<bool>()) {
-    *tuple = tmp;
-    *rid = old_oid;
-    return true;
-  }
-  return Next(tuple, rid);
+  return false;
 }
 
 }  // namespace bustub

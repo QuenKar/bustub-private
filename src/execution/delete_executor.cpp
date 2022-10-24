@@ -24,34 +24,57 @@ void DeleteExecutor::Init() {
   catalog_ = exec_ctx_->GetCatalog();
   tb_info_ = catalog_->GetTable(plan_->TableOid());
   tb_hp_ = tb_info_->table_.get();
+  child_executor_->Init();
 }
 
 bool DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) {
-  std::vector<std::pair<Tuple, RID>> child_tuples;
-  child_executor_->Init();
+  LockManager *lock_mgr = exec_ctx_->GetLockManager();
+  Transaction *txn = exec_ctx_->GetTransaction();
+  TransactionManager *txn_mgr = exec_ctx_->GetTransactionManager();
 
-  try {
-    Tuple old_tuple;
-    RID old_rid;
-    while (child_executor_->Next(&old_tuple, &old_rid)) {
-      child_tuples.emplace_back(std::pair{old_tuple, old_rid});
+  Tuple old_tuple;
+  RID old_rid;
+  while (true) {
+    try {
+      if (child_executor_->Next(&old_tuple, &old_rid)) {
+        break;
+      }
+    } catch (Exception &e) {
+      throw Exception(ExceptionType::UNKNOWN_TYPE, "DeleteError:child execute error.");
+      return false;
     }
-  } catch (Exception &e) {
-    throw Exception(ExceptionType::UNKNOWN_TYPE, "DeleteError:child execute error.");
-  }
 
-  // delete tuples
-  for (auto &p : child_tuples) {
+    // add lock
+    if (txn->GetIsolationLevel() != IsolationLevel::REPEATABLE_READ) {
+      if (!lock_mgr->LockExclusive(txn, *rid)) {
+        txn_mgr->Abort(txn);
+      }
+    } else {
+      if (!lock_mgr->LockUpgrade(txn, *rid)) {
+        txn_mgr->Abort(txn);
+      }
+    }
+
     // delete
-    tb_hp_->MarkDelete(p.second, exec_ctx_->GetTransaction());
+    tb_hp_->MarkDelete(old_rid, exec_ctx_->GetTransaction());
 
     // update index
     auto idxinfo_arr = catalog_->GetTableIndexes(tb_info_->name_);
 
     for (auto &idxinfo : idxinfo_arr) {
       idxinfo->index_->DeleteEntry(
-          p.first.KeyFromTuple(tb_info_->schema_, idxinfo->key_schema_, idxinfo->index_->GetKeyAttrs()), p.second,
+          old_tuple.KeyFromTuple(tb_info_->schema_, idxinfo->key_schema_, idxinfo->index_->GetKeyAttrs()), old_rid,
           exec_ctx_->GetTransaction());
+      // record the old tuple for rollback
+      IndexWriteRecord iw_record(old_rid, tb_info_->oid_, WType::DELETE, old_tuple, old_tuple, idxinfo->index_oid_,
+                                 exec_ctx_->GetCatalog());
+
+      txn->GetIndexWriteSet()->emplace_back(iw_record);
+    }
+
+    // unlock
+    if (lock_mgr && txn->GetIsolationLevel() == IsolationLevel::READ_COMMITTED) {
+      lock_mgr->Unlock(txn, old_rid);
     }
   }
 

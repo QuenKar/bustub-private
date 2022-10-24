@@ -18,62 +18,65 @@ namespace bustub {
 
 InsertExecutor::InsertExecutor(ExecutorContext *exec_ctx, const InsertPlanNode *plan,
                                std::unique_ptr<AbstractExecutor> &&child_executor)
-    : AbstractExecutor(exec_ctx), plan_(plan), child_executor_(std::move(child_executor)) {}
+    : AbstractExecutor(exec_ctx), plan_(plan), child_executor_(std::move(child_executor)) {
+  table_oid_t oid = plan->TableOid();
+  table_info_ = exec_ctx->GetCatalog()->GetTable(oid);
 
-void InsertExecutor::Init() {
-  catalog_ = exec_ctx_->GetCatalog();
-  tb_info_ = catalog_->GetTable(plan_->TableOid());
-  tb_hp_ = tb_info_->table_.get();
+  indexes_ = exec_ctx->GetCatalog()->GetTableIndexes(table_info_->name_);
 }
 
-bool InsertExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) {
-  // raw insert
-  if (plan_->IsRawInsert()) {
-    const auto &insert_arr = plan_->RawValues();
-    for (auto &vec_value : insert_arr) {
-      // insert tuple
-      Tuple t{vec_value, &tb_info_->schema_};
-      RID now_rid;
+void InsertExecutor::Init() {}
 
-      tb_hp_->InsertTuple(t, &now_rid, exec_ctx_->GetTransaction());
-      // update index
-      auto idxinfo_arr = catalog_->GetTableIndexes(tb_info_->name_);
-      for (auto &idxinfo : idxinfo_arr) {
-        idxinfo->index_->InsertEntry(
-            t.KeyFromTuple(tb_info_->schema_, idxinfo->key_schema_, idxinfo->index_->GetKeyAttrs()), now_rid,
-            exec_ctx_->GetTransaction());
+bool InsertExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) {
+  auto exec_ctx = GetExecutorContext();
+  Transaction *txn = exec_ctx_->GetTransaction();
+  TransactionManager *txn_mgr = exec_ctx->GetTransactionManager();
+  LockManager *lock_mgr = exec_ctx->GetLockManager();
+
+  Tuple tmp_tuple;
+  RID tmp_rid;
+  if (plan_->IsRawInsert()) {
+    for (uint32_t idx = 0; idx < plan_->RawValues().size(); idx++) {
+      const std::vector<Value> &raw_value = plan_->RawValuesAt(idx);
+      tmp_tuple = Tuple(raw_value, &table_info_->schema_);
+      if (table_info_->table_->InsertTuple(tmp_tuple, &tmp_rid, txn)) {
+        if (!lock_mgr->LockExclusive(txn, tmp_rid)) {
+          txn_mgr->Abort(txn);
+        }
+        for (auto indexinfo : indexes_) {
+          indexinfo->index_->InsertEntry(
+              tmp_tuple.KeyFromTuple(table_info_->schema_, indexinfo->key_schema_, indexinfo->index_->GetKeyAttrs()),
+              tmp_rid, txn);
+          IndexWriteRecord iwr(tmp_rid, table_info_->oid_, WType::INSERT, tmp_tuple, tmp_tuple, indexinfo->index_oid_,
+                               exec_ctx->GetCatalog());
+          txn->AppendTableWriteRecord(iwr);
+        }
       }
     }
     return false;
   }
 
-  // select insert
-  std::vector<Tuple> child_tuples;
   child_executor_->Init();
-
-  try {
-    Tuple tuple;
-    RID rid;
-    while (child_executor_->Next(&tuple, &rid)) {
-      child_tuples.push_back(tuple);
-    }
-  } catch (Exception &e) {
-    throw Exception(ExceptionType::UNKNOWN_TYPE, "InsertError:child execute error.");
-  }
-
-  for (auto &ct : child_tuples) {
-    RID now_rid;
-    // insert tuple
-    tb_hp_->InsertTuple(ct, &now_rid, exec_ctx_->GetTransaction());
-    // update index
-    auto idxinfo_arr = catalog_->GetTableIndexes(tb_info_->name_);
-    for (auto &idxinfo : idxinfo_arr) {
-      idxinfo->index_->InsertEntry(
-          ct.KeyFromTuple(tb_info_->schema_, idxinfo->key_schema_, idxinfo->index_->GetKeyAttrs()), now_rid,
-          exec_ctx_->GetTransaction());
+  while (child_executor_->Next(&tmp_tuple, &tmp_rid)) {
+    if (table_info_->table_->InsertTuple(tmp_tuple, &tmp_rid, txn)) {
+      if (txn->GetIsolationLevel() != IsolationLevel::REPEATABLE_READ) {
+        if (!lock_mgr->LockExclusive(txn, *rid)) {
+          txn_mgr->Abort(txn);
+        }
+      } else {
+        if (!lock_mgr->LockUpgrade(txn, *rid)) {
+          txn_mgr->Abort(txn);
+        }
+      }
+      for (auto indexinfo : indexes_) {
+        indexinfo->index_->InsertEntry(tmp_tuple.KeyFromTuple(*child_executor_->GetOutputSchema(),
+                                                              indexinfo->key_schema_, indexinfo->index_->GetKeyAttrs()),
+                                       tmp_rid, txn);
+        txn->GetIndexWriteSet()->emplace_back(tmp_rid, table_info_->oid_, WType::INSERT, tmp_tuple, tmp_tuple,
+                                              indexinfo->index_oid_, exec_ctx->GetCatalog());
+      }
     }
   }
-
   return false;
 }
 
