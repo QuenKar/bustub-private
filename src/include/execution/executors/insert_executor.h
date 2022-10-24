@@ -14,6 +14,7 @@
 
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "concurrency/transaction_manager.h"
 #include "execution/executor_context.h"
@@ -64,6 +65,10 @@ class InsertExecutor : public AbstractExecutor {
   std::unique_ptr<AbstractExecutor> child_executor_;
 
   std::vector<IndexInfo *> indexes_;
+
+  bool is_raw_;
+
+  uint32_t size_;
 };
 
 }  // namespace bustub
