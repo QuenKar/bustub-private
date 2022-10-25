@@ -17,31 +17,33 @@ namespace bustub {
 
 UpdateExecutor::UpdateExecutor(ExecutorContext *exec_ctx, const UpdatePlanNode *plan,
                                std::unique_ptr<AbstractExecutor> &&child_executor)
-    : AbstractExecutor(exec_ctx), plan_(plan), child_executor_(std::move(child_executor)) {}
-
-void UpdateExecutor::Init() {
-  catalog_ = exec_ctx_->GetCatalog();
+    : AbstractExecutor(exec_ctx), plan_(plan), child_executor_(std::move(child_executor)) {
+  catalog_ = exec_ctx->GetCatalog();
   table_info_ = catalog_->GetTable(plan_->TableOid());
   tb_hp_ = table_info_->table_.get();
-  child_executor_->Init();
+  indexes_ = catalog_->GetTableIndexes(table_info_->name_);
 }
 
+void UpdateExecutor::Init() { child_executor_->Init(); }
+
 bool UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) {
-  LockManager *lock_mgr = exec_ctx_->GetLockManager();
-  Transaction *txn = exec_ctx_->GetTransaction();
-  TransactionManager *txn_mgr = exec_ctx_->GetTransactionManager();
+  auto exec_ctx = GetExecutorContext();
+  LockManager *lock_mgr = exec_ctx->GetLockManager();
+  Transaction *txn = exec_ctx->GetTransaction();
+  TransactionManager *txn_mgr = exec_ctx->GetTransactionManager();
   Tuple old_tuple;
-  RID tpl_rid;
   while (true) {
     // get old tuple
     try {
-      if (!child_executor_->Next(&old_tuple, &tpl_rid)) {
+      if (!child_executor_->Next(&old_tuple, rid)) {
         break;
       }
     } catch (Exception &e) {
       throw Exception(ExceptionType::UNKNOWN_TYPE, "UpdateError:child execute error.");
       return false;
     }
+    *tuple = GenerateUpdatedTuple(old_tuple);
+
     // add exclusive lock
     if (txn->GetIsolationLevel() != IsolationLevel::REPEATABLE_READ) {
       if (!lock_mgr->LockExclusive(txn, *rid)) {
@@ -52,27 +54,25 @@ bool UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) {
         txn_mgr->Abort(txn);
       }
     }
-
     // update tuple
-    Tuple new_tuple = GenerateUpdatedTuple(old_tuple);
-    tb_hp_->UpdateTuple(new_tuple, tpl_rid, exec_ctx_->GetTransaction());
+    if (tb_hp_->UpdateTuple(*tuple, *rid, txn)) {
+      // update index:
+      // delete old tuple index, insert new tuple index
+      for (const auto &idx_info : indexes_) {
+        idx_info->index_->DeleteEntry(tuple->KeyFromTuple(*child_executor_->GetOutputSchema(), idx_info->key_schema_,
+                                                          idx_info->index_->GetKeyAttrs()),
+                                      *rid, txn);
+        idx_info->index_->InsertEntry(tuple->KeyFromTuple(*child_executor_->GetOutputSchema(), idx_info->key_schema_,
+                                                          idx_info->index_->GetKeyAttrs()),
+                                      *rid, txn);
+        // record the old tuple and new tuple in txn for rollback
+        IndexWriteRecord iw_record(*rid, table_info_->oid_, WType::UPDATE, *tuple, old_tuple, idx_info->index_oid_,
+                                   exec_ctx_->GetCatalog());  // WType::UPDATE?
 
-    // update index:
-    // delete old tuple index, insert new tuple index
-    for (const auto &idx_info : exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_)) {
-      idx_info->index_->DeleteEntry(
-          old_tuple.KeyFromTuple(table_info_->schema_, idx_info->key_schema_, idx_info->index_->GetKeyAttrs()), tpl_rid,
-          exec_ctx_->GetTransaction());
-      idx_info->index_->InsertEntry(
-          new_tuple.KeyFromTuple(table_info_->schema_, idx_info->key_schema_, idx_info->index_->GetKeyAttrs()), tpl_rid,
-          exec_ctx_->GetTransaction());
-      // record the old tuple and new tuple in txn for rollback
-      IndexWriteRecord iw_record(tpl_rid, table_info_->oid_, WType::UPDATE, new_tuple, old_tuple, idx_info->index_oid_,
-                                 exec_ctx_->GetCatalog());  // WType::UPDATE?
-
-      // will lead to memory unsafe
-      // iw_record.old_tuple_ = old_tuple;
-      txn->GetIndexWriteSet()->emplace_back(iw_record);
+        // will lead to memory unsafe
+        // iw_record.old_tuple_ = old_tuple;
+        txn->GetIndexWriteSet()->emplace_back(iw_record);
+      }
     }
   }
   return false;

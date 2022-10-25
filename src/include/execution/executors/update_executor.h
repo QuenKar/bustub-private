@@ -77,5 +77,7 @@ class UpdateExecutor : public AbstractExecutor {
   TableHeap *tb_hp_;
 
   Catalog *catalog_;
+
+  std::vector<IndexInfo *> indexes_;
 };
 }  // namespace bustub

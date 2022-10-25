@@ -58,13 +58,13 @@ bool DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) {
     // delete
     tb_hp_->MarkDelete(old_rid, exec_ctx_->GetTransaction());
 
-    // update index
+    // delete index
     auto idxinfo_arr = catalog_->GetTableIndexes(tb_info_->name_);
 
     for (auto &idxinfo : idxinfo_arr) {
-      idxinfo->index_->DeleteEntry(
-          old_tuple.KeyFromTuple(tb_info_->schema_, idxinfo->key_schema_, idxinfo->index_->GetKeyAttrs()), old_rid,
-          exec_ctx_->GetTransaction());
+      idxinfo->index_->DeleteEntry(old_tuple.KeyFromTuple(*child_executor_->GetOutputSchema(), idxinfo->key_schema_,
+                                                          idxinfo->index_->GetKeyAttrs()),
+                                   old_rid, exec_ctx_->GetTransaction());
       // record the old tuple for rollback
       IndexWriteRecord iw_record(old_rid, tb_info_->oid_, WType::DELETE, old_tuple, old_tuple, idxinfo->index_oid_,
                                  exec_ctx_->GetCatalog());
