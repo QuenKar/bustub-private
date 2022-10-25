@@ -16,11 +16,11 @@
 #include <utility>
 #include <vector>
 
+#include "concurrency/transaction_manager.h"
 #include "execution/executor_context.h"
 #include "execution/executors/abstract_executor.h"
 #include "execution/plans/delete_plan.h"
 #include "storage/table/tuple.h"
-
 namespace bustub {
 
 /**
@@ -60,8 +60,9 @@ class DeleteExecutor : public AbstractExecutor {
   const DeletePlanNode *plan_;
   /** The child executor from which RIDs for deleted tuples are pulled */
   std::unique_ptr<AbstractExecutor> child_executor_;
-  Catalog *catalog_;
-  TableInfo *tb_info_;
-  TableHeap *tb_hp_;
+  /** Metadata identifying the table that should be updated */
+  const TableInfo *table_info_;
+
+  std::vector<IndexInfo *> indexes_;
 };
 }  // namespace bustub

@@ -14,12 +14,13 @@
 
 #include <memory>
 #include <utility>
+#include <vector>
 
+#include "concurrency/transaction_manager.h"
 #include "execution/executor_context.h"
 #include "execution/executors/abstract_executor.h"
 #include "execution/plans/insert_plan.h"
 #include "storage/table/tuple.h"
-
 namespace bustub {
 
 /**
@@ -59,10 +60,16 @@ class InsertExecutor : public AbstractExecutor {
  private:
   /** The insert plan node to be executed*/
   const InsertPlanNode *plan_;
-  Catalog *catalog_;
-  TableHeap *tb_hp_;
-  TableInfo *tb_info_;
+
   std::unique_ptr<AbstractExecutor> child_executor_;
+
+  TableInfo *table_info_;
+
+  bool is_raw_;
+
+  uint32_t size_;
+
+  std::vector<IndexInfo *> indexes_;
 };
 
 }  // namespace bustub

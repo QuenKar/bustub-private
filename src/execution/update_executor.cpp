@@ -11,38 +11,53 @@
 //===----------------------------------------------------------------------===//
 #include <memory>
 
+#include <iostream>
 #include "execution/executors/update_executor.h"
-
 namespace bustub {
 
 UpdateExecutor::UpdateExecutor(ExecutorContext *exec_ctx, const UpdatePlanNode *plan,
                                std::unique_ptr<AbstractExecutor> &&child_executor)
-    : AbstractExecutor(exec_ctx), plan_(plan), child_executor_(std::move(child_executor)) {}
-
-void UpdateExecutor::Init() {
-  catalog_ = exec_ctx_->GetCatalog();
-  table_info_ = catalog_->GetTable(plan_->TableOid());
-  tb_hp_ = table_info_->table_.get();
+    : AbstractExecutor(exec_ctx), plan_(plan), child_executor_(child_executor.release()) {
+  table_oid_t oid = plan->TableOid();
+  auto catalog = exec_ctx->GetCatalog();
+  table_info_ = catalog->GetTable(oid);
+  indexes_ = catalog->GetTableIndexes(table_info_->name_);
 }
 
+void UpdateExecutor::Init() { child_executor_->Init(); }
+
 bool UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) {
-  std::vector<std::pair<Tuple, RID>> child_tuples;
-  child_executor_->Init();
+  auto exec_ctx = GetExecutorContext();
+  Transaction *txn = exec_ctx_->GetTransaction();
+  TransactionManager *txn_mgr = exec_ctx->GetTransactionManager();
+  LockManager *lock_mgr = exec_ctx->GetLockManager();
 
-  try {
-    Tuple old_tuple;
-    RID old_rid;
-    while (child_executor_->Next(&old_tuple, &old_rid)) {
-      child_tuples.emplace_back(std::pair{old_tuple, old_rid});
+  Tuple src_tuple;
+  while (child_executor_->Next(&src_tuple, rid)) {
+    *tuple = this->GenerateUpdatedTuple(src_tuple);
+    if (txn->GetIsolationLevel() != IsolationLevel::REPEATABLE_READ) {
+      if (!lock_mgr->LockExclusive(txn, *rid)) {
+        txn_mgr->Abort(txn);
+      }
+    } else {
+      if (!lock_mgr->LockUpgrade(txn, *rid)) {
+        txn_mgr->Abort(txn);
+      }
     }
-  } catch (Exception &e) {
-    throw Exception(ExceptionType::UNKNOWN_TYPE, "UpdateError:child execute error.");
-  }
+    if (table_info_->table_->UpdateTuple(*tuple, *rid, txn)) {
+      for (auto indexinfo : indexes_) {
+        indexinfo->index_->DeleteEntry(tuple->KeyFromTuple(*child_executor_->GetOutputSchema(), indexinfo->key_schema_,
+                                                           indexinfo->index_->GetKeyAttrs()),
+                                       *rid, txn);
+        indexinfo->index_->InsertEntry(tuple->KeyFromTuple(*child_executor_->GetOutputSchema(), indexinfo->key_schema_,
+                                                           indexinfo->index_->GetKeyAttrs()),
+                                       *rid, txn);
 
-  // update tuples
-  for (auto &p : child_tuples) {
-    Tuple new_tuple = GenerateUpdatedTuple(p.first);
-    tb_hp_->UpdateTuple(new_tuple, p.second, exec_ctx_->GetTransaction());
+        IndexWriteRecord iwr(*rid, table_info_->oid_, WType::UPDATE, *tuple, src_tuple, indexinfo->index_oid_,
+                             exec_ctx->GetCatalog());
+        txn->AppendIndexWriteRecord(iwr);
+      }
+    }
   }
   return false;
 }
