@@ -64,6 +64,10 @@ class InsertExecutor : public AbstractExecutor {
   TableInfo *table_info_;
   std::unique_ptr<AbstractExecutor> child_executor_;
 
+  uint32_t size_;
+
+  bool is_raw_;
+
   std::vector<IndexInfo *> indexes_;
 };
 

@@ -11,7 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "execution/executors/seq_scan_executor.h"
-#include <iostream>
+
 namespace bustub {
 
 SeqScanExecutor::SeqScanExecutor(ExecutorContext *exec_ctx, const SeqScanPlanNode *plan)
@@ -31,7 +31,7 @@ void SeqScanExecutor::Init() {
 }
 
 bool SeqScanExecutor::Next(Tuple *tuple, RID *rid) {
-  const Schema *out_schema = GetOutputSchema();
+  const Schema *out_schema = this->GetOutputSchema();
   auto exec_ctx = GetExecutorContext();
   Transaction *txn = exec_ctx->GetTransaction();
   TransactionManager *txn_mgr = exec_ctx->GetTransactionManager();
