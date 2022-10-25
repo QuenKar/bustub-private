@@ -63,6 +63,5 @@ class DeleteExecutor : public AbstractExecutor {
   std::unique_ptr<AbstractExecutor> child_executor_;
   Catalog *catalog_;
   TableInfo *tb_info_;
-  TableHeap *tb_hp_;
 };
 }  // namespace bustub

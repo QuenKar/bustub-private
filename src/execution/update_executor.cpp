@@ -20,7 +20,6 @@ UpdateExecutor::UpdateExecutor(ExecutorContext *exec_ctx, const UpdatePlanNode *
     : AbstractExecutor(exec_ctx), plan_(plan), child_executor_(std::move(child_executor)) {
   catalog_ = exec_ctx->GetCatalog();
   table_info_ = catalog_->GetTable(plan_->TableOid());
-  tb_hp_ = table_info_->table_.get();
   indexes_ = catalog_->GetTableIndexes(table_info_->name_);
 }
 
@@ -34,14 +33,11 @@ bool UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) {
   Tuple old_tuple;
   while (true) {
     // get old tuple
-    try {
-      if (!child_executor_->Next(&old_tuple, rid)) {
-        break;
-      }
-    } catch (Exception &e) {
-      throw Exception(ExceptionType::UNKNOWN_TYPE, "UpdateError:child execute error.");
-      return false;
+
+    if (!child_executor_->Next(&old_tuple, rid)) {
+      break;
     }
+
     *tuple = GenerateUpdatedTuple(old_tuple);
 
     // add exclusive lock
@@ -55,7 +51,7 @@ bool UpdateExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) {
       }
     }
     // update tuple
-    if (tb_hp_->UpdateTuple(*tuple, *rid, txn)) {
+    if (table_info_->table_->UpdateTuple(*tuple, *rid, txn)) {
       // update index:
       // delete old tuple index, insert new tuple index
       for (const auto &idx_info : indexes_) {
